@@ -445,6 +445,22 @@ class OutreachReadinessCheck(Base):
     evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
 
 
+class OutreachExecutionRecord(Base):
+    __tablename__ = "outreach_execution_records"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    outreach_draft_package_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("outreach_draft_packages.id"), index=True)
+    outreach_draft_message_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("outreach_draft_messages.id"), index=True)
+    channel: Mapped[str] = mapped_column(String(30))
+    operator: Mapped[str] = mapped_column(String(200))
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    external_reference: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    resulting_business_state: Mapped[str] = mapped_column(String(40))
+
+
 def make_engine(database_url: str) -> Any:
     kwargs: dict[str, Any] = {"pool_pre_ping": True, "future": True}
     if database_url.startswith("sqlite"):

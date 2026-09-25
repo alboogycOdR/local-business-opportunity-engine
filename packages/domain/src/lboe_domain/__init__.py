@@ -31,6 +31,12 @@ from .discovery import (
     normalize_phone,
     normalize_text,
 )
+from .execution import (
+    ManualOutreachLogRequest,
+    ManualOutreachLogResult,
+    OutreachExecutionEvidence,
+    OutreachExecutionRecord,
+)
 from .fakes import FakeDiscoveryAdapter
 from .outreach import (
     OutreachDraftCheck,
@@ -113,6 +119,10 @@ __all__ = [
     "OutreachReadinessDecision",
     "OutreachReadinessRequest",
     "OutreachReadinessResult",
+    "ManualOutreachLogRequest",
+    "ManualOutreachLogResult",
+    "OutreachExecutionEvidence",
+    "OutreachExecutionRecord",
     "WebsiteResolutionResult",
     "transition",
     "validate_transition",

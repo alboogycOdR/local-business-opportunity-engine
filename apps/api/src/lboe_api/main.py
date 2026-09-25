@@ -21,6 +21,7 @@ from lboe_domain import (
     DiscoveryValidationError,
     InvalidTransition,
     LeadState,
+    ManualOutreachLogRequest,
     OpportunityScoreRequest,
     OutreachDraftRequest,
     OutreachReadinessRequest,
@@ -69,6 +70,7 @@ from .db import (
     OutreachDraftCheck,
     OutreachDraftMessage,
     OutreachDraftPackage,
+    OutreachExecutionRecord,
     OutreachReadinessCheck,
     OutreachReadinessReview,
     PipelineEvent,
@@ -1490,6 +1492,159 @@ def get_outreach_readiness(review_id: uuid.UUID, session: Session = Depends(db_s
     if review is None:
         raise HTTPException(status_code=404, detail="outreach_readiness_not_found")
     return readiness_dict(review, session)
+
+
+def outreach_log_dict(record: OutreachExecutionRecord) -> dict[str, Any]:
+    return {
+        "id": str(record.id),
+        "business_id": str(record.business_id),
+        "outreach_draft_package_id": str(record.outreach_draft_package_id),
+        "outreach_draft_message_id": str(record.outreach_draft_message_id),
+        "channel": record.channel,
+        "operator": record.operator,
+        "sent_at": record.sent_at,
+        "external_reference": record.external_reference,
+        "notes": record.notes,
+        "evidence": record.evidence,
+        "resulting_business_state": record.resulting_business_state,
+        "created_at": record.created_at,
+        "delivery_performed_by_system": False,
+    }
+
+
+@app.post("/v1/businesses/{business_id}/outreach-log")
+def create_outreach_log(
+    business_id: uuid.UUID,
+    request: ManualOutreachLogRequest,
+    session: Session = Depends(db_session),
+) -> dict[str, Any]:
+    business = session.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    package = session.get(OutreachDraftPackage, request.outreach_draft_package_id)
+    message = session.get(OutreachDraftMessage, request.outreach_draft_message_id)
+    key = (
+        f"LOG_MANUAL_OUTREACH:{business_id}:{request.outreach_draft_message_id}:{request.idempotency_key or 'default'}"
+    )
+    existing = session.scalar(select(Job).where(Job.idempotency_key == key))
+    if existing and existing.payload.get("execution_id"):
+        try:
+            record = session.get(OutreachExecutionRecord, uuid.UUID(str(existing.payload["execution_id"])))
+        except ValueError:
+            record = session.scalar(
+                select(OutreachExecutionRecord)
+                .where(
+                    OutreachExecutionRecord.business_id == business_id,
+                    OutreachExecutionRecord.outreach_draft_message_id == request.outreach_draft_message_id,
+                )
+                .order_by(OutreachExecutionRecord.created_at.desc())
+            )
+        if record:
+            return outreach_log_dict(record)
+    reason: str | None = None
+    if business.state != LeadState.OUTREACH_READY.value:
+        reason = "business_not_outreach_ready"
+    elif package is None or package.business_id != business_id or package.status != "ready":
+        reason = "draft_package_not_ready"
+    elif message is None or message.package_id != package.id:
+        reason = "draft_message_not_found"
+    elif not message.approved:
+        reason = "draft_message_not_approved"
+    elif message.channel != request.channel:
+        reason = "channel_mismatch"
+    elif session.scalar(select(SuppressionEntry).where(SuppressionEntry.business_id == business_id)):
+        reason = "suppressed"
+    else:
+        brief = session.scalar(
+            select(BusinessBrief)
+            .where(BusinessBrief.business_id == business_id)
+            .order_by(BusinessBrief.created_at.desc())
+        )
+        risks = (
+            session.scalars(select(BusinessBriefRisk).where(BusinessBriefRisk.business_brief_id == brief.id)).all()
+            if brief
+            else []
+        )
+        if brief and brief.recommended_next_action == "do_not_contact":
+            reason = "do_not_contact"
+        elif any(risk.code == "AMBIGUOUS_IDENTITY" for risk in risks):
+            reason = "ambiguous_identity"
+    if reason is not None:
+        job = Job(
+            job_type="LOG_MANUAL_OUTREACH",
+            idempotency_key=key,
+            status="not_eligible",
+            payload={"business_id": str(business_id), "reason": reason},
+        )
+        session.add(job)
+        session.commit()
+        return {
+            "status": "not_manual_outreach_log_eligible",
+            "reason": reason,
+            "business_id": str(business_id),
+            "delivery_performed_by_system": False,
+            "job_id": str(job.id),
+        }
+    job = Job(
+        job_type="LOG_MANUAL_OUTREACH", idempotency_key=key, status="running", payload={"business_id": str(business_id)}
+    )
+    session.add(job)
+    session.commit()
+    assert package is not None and message is not None
+    current = LeadState(business.state)
+    validate_transition(current, LeadState.CONTACTED)
+    record = OutreachExecutionRecord(
+        business_id=business_id,
+        outreach_draft_package_id=package.id,
+        outreach_draft_message_id=message.id,
+        channel=request.channel,
+        operator=request.operator,
+        sent_at=request.sent_at,
+        external_reference=request.external_reference,
+        notes=request.notes,
+        evidence={**request.evidence, "delivery_performed_by_system": False},
+        resulting_business_state=LeadState.CONTACTED.value,
+    )
+    session.add(record)
+    session.flush()
+    business.state = LeadState.CONTACTED.value
+    session.add(
+        PipelineEvent(
+            business_id=business_id,
+            from_state=current.value,
+            to_state=LeadState.CONTACTED.value,
+            actor=request.operator,
+            reason="operator-recorded manual outreach; no system delivery",
+        )
+    )
+    job.status = "succeeded"
+    job.payload = {
+        "business_id": str(business_id),
+        "execution_id": str(record.id),
+        "delivery_performed_by_system": False,
+    }
+    session.commit()
+    return outreach_log_dict(record)
+
+
+@app.get("/v1/businesses/{business_id}/outreach-logs")
+def list_outreach_logs(business_id: uuid.UUID, session: Session = Depends(db_session)) -> list[dict[str, Any]]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    records = session.scalars(
+        select(OutreachExecutionRecord)
+        .where(OutreachExecutionRecord.business_id == business_id)
+        .order_by(OutreachExecutionRecord.created_at)
+    ).all()
+    return [outreach_log_dict(record) for record in records]
+
+
+@app.get("/v1/outreach-logs/{log_id}")
+def get_outreach_log(log_id: uuid.UUID, session: Session = Depends(db_session)) -> dict[str, Any]:
+    record = session.get(OutreachExecutionRecord, log_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="outreach_log_not_found")
+    return outreach_log_dict(record)
 
 
 @app.get("/v1/campaigns/{campaign_id}/discovery-candidates")
