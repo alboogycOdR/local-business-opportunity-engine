@@ -22,6 +22,7 @@ from lboe_domain import (
     InvalidTransition,
     LeadState,
     OpportunityScoreRequest,
+    OutreachDraftRequest,
     normalize_domain,
     normalize_phone,
     normalize_text,
@@ -63,6 +64,9 @@ from .db import (
     OpportunityComponent,
     OpportunityHold,
     OpportunityScore,
+    OutreachDraftCheck,
+    OutreachDraftMessage,
+    OutreachDraftPackage,
     PipelineEvent,
     SourceObservation,
     SuppressionEntry,
@@ -73,6 +77,8 @@ from .demo_generator import VERSION as DEMO_VERSION
 from .demo_generator import qa_demo, render_demo, write_artifacts
 from .discovery_service import discovery_idempotency_key, execute_discovery
 from .logging import configure_logging
+from .outreach_service import VERSION as OUTREACH_VERSION
+from .outreach_service import build_messages, safety_checks
 from .scoring_service import execute_score, score_idempotency_key
 
 logger = logging.getLogger("lboe.api")
@@ -1067,6 +1073,190 @@ def get_review(review_id: uuid.UUID, session: Session = Depends(db_session)) -> 
             {"code": item.code, "label": item.label, "passed": item.passed, "notes": item.notes} for item in items
         ],
     }
+
+
+def outreach_draft_dict(package: OutreachDraftPackage, session: Session) -> dict[str, Any]:
+    messages = session.scalars(select(OutreachDraftMessage).where(OutreachDraftMessage.package_id == package.id)).all()
+    checks = session.scalars(select(OutreachDraftCheck).where(OutreachDraftCheck.package_id == package.id)).all()
+    return {
+        "id": str(package.id),
+        "business_id": str(package.business_id),
+        "demo_id": str(package.demo_id),
+        "brief_id": str(package.brief_id),
+        "score_id": str(package.score_id) if package.score_id else None,
+        "version": package.version,
+        "offer_type": package.offer_type,
+        "offer_angle": package.offer_angle,
+        "status": package.status,
+        "created_at": package.created_at,
+        "messages": [
+            {
+                "id": str(m.id),
+                "channel": m.channel,
+                "subject": m.subject,
+                "body": m.body,
+                "tone": m.tone,
+                "evidence": m.evidence,
+                "approved": m.approved,
+            }
+            for m in messages
+        ],
+        "checks": [
+            {"id": str(c.id), "code": c.code, "passed": c.passed, "notes": c.notes, "evidence": c.evidence}
+            for c in checks
+        ],
+        "safe_next_action": "operator_review_before_consent_or_sending",
+    }
+
+
+@app.post("/v1/businesses/{business_id}/outreach-draft")
+def create_outreach_draft(
+    business_id: uuid.UUID, payload: dict[str, Any] | None = None, session: Session = Depends(db_session)
+) -> dict[str, Any]:
+    business = session.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    try:
+        request = OutreachDraftRequest(business_id=business_id, **(payload or {}))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=422, detail={"error": "invalid_outreach_draft_request", "message": str(exc)}
+        ) from exc
+    if not request.channels:
+        return {"status": "not_outreach_draft_eligible", "reason": "channels_required", "business_id": str(business_id)}
+    brief = session.scalar(
+        select(BusinessBrief).where(BusinessBrief.business_id == business_id).order_by(BusinessBrief.created_at.desc())
+    )
+    approved_demo = session.scalar(
+        select(GeneratedDemo)
+        .where(GeneratedDemo.business_id == business_id, GeneratedDemo.status == "approved")
+        .order_by(GeneratedDemo.created_at.desc())
+    )
+    reason: str | None = None
+    if business.state != LeadState.APPROVED_FOR_OUTREACH.value:
+        reason = "business_not_approved_for_outreach"
+    elif brief is None:
+        reason = "brief_required"
+    elif approved_demo is None:
+        reason = "no_approved_demo"
+    elif session.scalar(select(SuppressionEntry).where(SuppressionEntry.business_id == business_id)):
+        reason = "suppressed"
+    elif any(
+        risk.code in {"AMBIGUOUS_IDENTITY", "SUPPRESSED", "DO_NOT_CONTACT"}
+        for risk in session.scalars(
+            select(BusinessBriefRisk).where(BusinessBriefRisk.business_brief_id == brief.id)
+        ).all()
+    ):
+        reason = "identity_or_policy_hold"
+    elif brief.recommended_next_action == "do_not_contact":
+        reason = "do_not_contact"
+    else:
+        qa = session.scalar(
+            select(DemoQaRun).where(DemoQaRun.demo_id == approved_demo.id).order_by(DemoQaRun.created_at.desc())
+        )
+        review = session.scalar(
+            select(DemoReview)
+            .where(DemoReview.demo_id == approved_demo.id, DemoReview.decision == "approve")
+            .order_by(DemoReview.created_at.desc())
+        )
+        if qa is None or qa.status != "passed":
+            reason = "demo_qa_not_passed"
+        elif review is None:
+            reason = "human_review_required"
+    demo_id = request.demo_id or (approved_demo.id if approved_demo else uuid.uuid4())
+    channel_key = ",".join(sorted(request.channels))
+    key = f"GENERATE_OUTREACH_DRAFT:{business_id}:{demo_id}:{request.idempotency_key or 'default'}:{channel_key}"
+    existing = session.scalar(select(Job).where(Job.idempotency_key == key))
+    if existing and existing.payload.get("package_id"):
+        package = session.get(OutreachDraftPackage, uuid.UUID(str(existing.payload["package_id"])))
+        if package:
+            return outreach_draft_dict(package, session)
+    if reason is not None:
+        job = Job(
+            job_type="GENERATE_OUTREACH_DRAFT",
+            idempotency_key=key,
+            status="not_eligible",
+            payload={"business_id": str(business_id), "reason": reason},
+        )
+        session.add(job)
+        session.commit()
+        return {
+            "status": "not_outreach_draft_eligible",
+            "reason": reason,
+            "business_id": str(business_id),
+            "job_id": str(job.id),
+        }
+    assert brief is not None and approved_demo is not None
+    job = Job(
+        job_type="GENERATE_OUTREACH_DRAFT",
+        idempotency_key=key,
+        status="running",
+        payload={"business_id": str(business_id)},
+    )
+    session.add(job)
+    session.commit()
+    package = OutreachDraftPackage(
+        business_id=business_id,
+        demo_id=approved_demo.id,
+        brief_id=brief.id,
+        score_id=brief.score_id,
+        version=OUTREACH_VERSION,
+        offer_type="starter_website_offer",
+        status="blocked",
+    )
+    session.add(package)
+    session.commit()
+    brief_payload = brief_dict(brief, session)
+    offer_type, angle, evidence, messages = build_messages(business, brief_payload, approved_demo, request.channels)
+    checks = safety_checks(messages, demo_approved=True, suppressed=False, do_not_contact=False, ambiguous=False)
+    package.offer_type = offer_type
+    package.offer_angle = angle
+    package.status = "ready" if all(item["passed"] for item in checks) else "blocked"
+    for message in messages:
+        session.add(
+            OutreachDraftMessage(
+                package_id=package.id,
+                channel=message.channel,
+                subject=message.subject,
+                body=message.body,
+                tone=message.tone,
+                evidence=message.evidence,
+            )
+        )
+    for check in checks:
+        session.add(
+            OutreachDraftCheck(
+                package_id=package.id,
+                code=check["code"],
+                passed=check["passed"],
+                notes=check["notes"],
+                evidence={**check["evidence"], "offer_angle": angle, "source": evidence},
+            )
+        )
+    job.status = "succeeded" if package.status == "ready" else "failed"
+    job.payload = {"business_id": str(business_id), "package_id": str(package.id), "status": package.status}
+    session.commit()
+    return outreach_draft_dict(package, session)
+
+
+@app.get("/v1/businesses/{business_id}/outreach-drafts")
+def list_outreach_drafts(business_id: uuid.UUID, session: Session = Depends(db_session)) -> list[dict[str, Any]]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    packages = session.scalars(
+        select(OutreachDraftPackage)
+        .where(OutreachDraftPackage.business_id == business_id)
+        .order_by(OutreachDraftPackage.created_at)
+    ).all()
+    return [outreach_draft_dict(package, session) for package in packages]
+
+
+@app.get("/v1/outreach-drafts/{package_id}")
+def get_outreach_draft(package_id: uuid.UUID, session: Session = Depends(db_session)) -> dict[str, Any]:
+    package = session.get(OutreachDraftPackage, package_id)
+    if package is None:
+        raise HTTPException(status_code=404, detail="outreach_draft_not_found")
+    return outreach_draft_dict(package, session)
 
 
 @app.get("/v1/campaigns/{campaign_id}/discovery-candidates")

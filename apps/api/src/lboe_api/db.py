@@ -369,6 +369,42 @@ class DemoReviewChecklistItem(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class OutreachDraftPackage(Base):
+    __tablename__ = "outreach_draft_packages"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    demo_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("generated_demos.id"), index=True)
+    brief_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("business_briefs.id"), index=True)
+    score_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("opportunity_scores.id"), nullable=True, index=True)
+    version: Mapped[str] = mapped_column(String(100))
+    offer_type: Mapped[str] = mapped_column(String(60))
+    offer_angle: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OutreachDraftMessage(Base):
+    __tablename__ = "outreach_draft_messages"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    package_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("outreach_draft_packages.id"), index=True)
+    channel: Mapped[str] = mapped_column(String(30))
+    subject: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    body: Mapped[str] = mapped_column(Text)
+    tone: Mapped[str] = mapped_column(String(50))
+    evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    approved: Mapped[bool] = mapped_column(default=False)
+
+
+class OutreachDraftCheck(Base):
+    __tablename__ = "outreach_draft_checks"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    package_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("outreach_draft_packages.id"), index=True)
+    code: Mapped[str] = mapped_column(String(100))
+    passed: Mapped[bool] = mapped_column(default=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+
+
 def make_engine(database_url: str) -> Any:
     kwargs: dict[str, Any] = {"pool_pre_ping": True, "future": True}
     if database_url.startswith("sqlite"):

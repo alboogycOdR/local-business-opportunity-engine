@@ -32,6 +32,14 @@ from .discovery import (
     normalize_text,
 )
 from .fakes import FakeDiscoveryAdapter
+from .outreach import (
+    OutreachDraftCheck,
+    OutreachDraftEvidence,
+    OutreachDraftMessage,
+    OutreachDraftPackage,
+    OutreachDraftRequest,
+    OutreachOffer,
+)
 from .review import DemoReviewChecklist, DemoReviewNote, DemoReviewRequest, DemoReviewResult
 from .scoring import (
     OpportunityScoreComponent,
@@ -87,6 +95,12 @@ __all__ = [
     "DemoReviewNote",
     "DemoReviewRequest",
     "DemoReviewResult",
+    "OutreachDraftCheck",
+    "OutreachDraftEvidence",
+    "OutreachDraftMessage",
+    "OutreachDraftPackage",
+    "OutreachDraftRequest",
+    "OutreachOffer",
     "WebsiteResolutionResult",
     "transition",
     "validate_transition",
