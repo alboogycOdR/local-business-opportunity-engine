@@ -44,6 +44,9 @@ class Business(Base):
     locality: Mapped[str | None] = mapped_column(String(200), nullable=True)
     address_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     identity_key: Mapped[str] = mapped_column(String(300), index=True)
+    source_identifier: Mapped[str | None] = mapped_column(String(300), nullable=True, index=True)
+    normalized_phone: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
+    normalized_domain: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     state: Mapped[str] = mapped_column(String(40), default="DISCOVERED", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -106,6 +109,22 @@ class Job(Base):
     job_type: Mapped[str] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(30), default="queued")
     payload: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DedupeEvidence(Base):
+    __tablename__ = "dedupe_evidence"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    campaign_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("campaigns.id"), index=True)
+    candidate_source: Mapped[str] = mapped_column(String(80))
+    candidate_source_id: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    matched_business_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("businesses.id"), nullable=True, index=True
+    )
+    method: Mapped[str] = mapped_column(String(50))
+    reason: Mapped[str] = mapped_column(String(500))
+    confidence: Mapped[float] = mapped_column(Float)
+    merged: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

@@ -12,9 +12,12 @@
     "phone": {"type": ["string", "null"]},
     "website": {"type": ["string", "null"], "format": "uri"},
     "source": {"type": "string", "minLength": 1},
+    "source_id": {"type": ["string", "null"]},
     "source_ref": {"type": ["string", "null"]},
     "source_url": {"type": ["string", "null"], "format": "uri"},
-    "observed_at": {"type": "string", "format": "date-time"}
+    "observed_at": {"type": "string", "format": "date-time"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "provenance": {"type": "object"}
   },
   "additionalProperties": false
 }

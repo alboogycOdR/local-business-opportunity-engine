@@ -32,9 +32,10 @@ ignore = ["B008"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-pythonpath = ["apps/api/src", "packages/domain/src", "packages/scoring/src"]
+pythonpath = ["apps/api/src", "packages/domain/src", "packages/scoring/src", "integrations/maps_scraper/src"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
 warn_unused_configs = true
+mypy_path = "apps/api/src:packages/domain/src:packages/scoring/src:integrations/maps_scraper/src"

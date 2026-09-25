@@ -6,12 +6,23 @@ import csv
 import io
 import logging
 import uuid
-from collections.abc import Generator
+from collections.abc import AsyncIterator, Generator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query
-from lboe_domain import ALLOWED_TRANSITIONS, InvalidTransition, LeadState, validate_transition
+from lboe_domain import (
+    ALLOWED_TRANSITIONS,
+    DiscoveryRequest,
+    InvalidTransition,
+    LeadState,
+    normalize_domain,
+    normalize_phone,
+    normalize_text,
+    validate_transition,
+)
+from lboe_maps_scraper import MapsScraperAdapter, MapsScraperError
 from pydantic import BaseModel, Field
 from redis import Redis
 from sqlalchemy import select, text
@@ -24,18 +35,44 @@ from .db import (
     Business,
     Campaign,
     Contact,
+    Job,
     PipelineEvent,
     SourceObservation,
     SuppressionEntry,
     make_engine,
 )
+from .discovery_service import discovery_idempotency_key, execute_discovery
 from .logging import configure_logging
 
 logger = logging.getLogger("lboe.api")
 settings = Settings()
 engine = make_engine(settings.database_url)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
-app = FastAPI(title="Local Business Opportunity Engine", version="0.1.0")
+discovery_adapter = MapsScraperAdapter(
+    base_url=settings.maps_scraper_url,
+    enabled=settings.maps_scraper_enabled,
+    kill_switch=settings.discovery_kill_switch,
+    poll_interval_seconds=settings.discovery_poll_interval_seconds,
+    max_concurrency=settings.discovery_max_concurrency,
+)
+
+
+def set_discovery_adapter(adapter: Any) -> None:
+    """Replace the adapter in tests/local tooling without changing route code."""
+    global discovery_adapter
+    discovery_adapter = adapter
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    configure_logging(settings.log_level)
+    if settings.auto_create_schema:
+        Base.metadata.create_all(engine)
+    logger.info("api_started")
+    yield
+
+
+app = FastAPI(title="Local Business Opportunity Engine", version="0.1.0", lifespan=lifespan)
 
 
 class CampaignCreate(BaseModel):
@@ -78,8 +115,8 @@ def db_session() -> Generator[Session, None, None]:
 
 
 def identity_key(record: dict[str, Any]) -> str:
-    name = " ".join(str(record.get("display_name", "")).lower().split())
-    locality = " ".join(str(record.get("locality") or record.get("address_text") or "").lower().split())
+    name = normalize_text(str(record.get("display_name", ""))) or ""
+    locality = normalize_text(str(record.get("locality") or record.get("address_text") or "")) or ""
     return f"{name}|{locality}"[:300]
 
 
@@ -87,13 +124,6 @@ def parse_records(request: ImportRequest) -> list[dict[str, Any]]:
     if request.format == "json":
         return request.records or []
     return [dict(row) for row in csv.DictReader(io.StringIO(request.csv_text or ""))]
-
-
-@app.on_event("startup")
-def startup() -> None:
-    configure_logging(settings.log_level)
-    Base.metadata.create_all(engine)
-    logger.info("api_started")
 
 
 @app.get("/health")
@@ -135,6 +165,54 @@ def get_campaign(campaign_id: uuid.UUID, session: Session = Depends(db_session))
     if campaign is None:
         raise HTTPException(status_code=404, detail="campaign_not_found")
     return campaign
+
+
+class DiscoveryRequestBody(BaseModel):
+    queries: list[str] = Field(min_length=1, max_length=25)
+    geography: str | None = None
+    max_results: int = Field(default=25, ge=1, le=100)
+    timeout_seconds: float = Field(default=300, gt=0, le=3600)
+    idempotency_key: str | None = Field(default=None, max_length=300)
+
+
+@app.post("/v1/campaigns/{campaign_id}/discover")
+async def discover_campaign(
+    campaign_id: uuid.UUID,
+    payload: DiscoveryRequestBody,
+    session: Session = Depends(db_session),
+) -> dict[str, Any]:
+    if session.get(Campaign, campaign_id) is None:
+        raise HTTPException(status_code=404, detail="campaign_not_found")
+    request = DiscoveryRequest(campaign_id=campaign_id, **payload.model_dump())
+    key = discovery_idempotency_key(request)
+    existing = session.scalar(select(Job).where(Job.idempotency_key == key))
+    if existing:
+        return {"job_id": str(existing.id), "status": existing.status, "result": existing.payload.get("result")}
+    job = Job(
+        idempotency_key=key,
+        job_type="DISCOVER_CAMPAIGN",
+        status="running",
+        payload={"request": request.model_dump(mode="json")},
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    try:
+        result = await execute_discovery(session, discovery_adapter, request)
+    except MapsScraperError as exc:
+        job.status = "failed"
+        job.payload = {"request": request.model_dump(mode="json"), "error": str(exc)}
+        session.commit()
+        raise HTTPException(status_code=502, detail={"error": "discovery_failed", "job_id": str(job.id)}) from exc
+    except Exception as exc:  # noqa: BLE001
+        job.status = "failed"
+        job.payload = {"request": request.model_dump(mode="json"), "error": type(exc).__name__}
+        session.commit()
+        raise HTTPException(status_code=500, detail={"error": "discovery_failed", "job_id": str(job.id)}) from exc
+    job.status = "succeeded"
+    job.payload = {"request": request.model_dump(mode="json"), "result": result}
+    session.commit()
+    return {"job_id": str(job.id), "status": job.status, "result": result}
 
 
 def business_dict(business: Business, session: Session) -> dict[str, Any]:
@@ -210,6 +288,8 @@ def import_candidates(
             locality=row.get("locality"),
             address_text=row.get("address_text"),
             identity_key=key,
+            normalized_phone=normalize_phone(row.get("phone")),
+            normalized_domain=normalize_domain(row.get("website")),
         )
         session.add(business)
         session.flush()

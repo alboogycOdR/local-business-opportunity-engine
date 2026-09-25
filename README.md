@@ -2,7 +2,7 @@
 
 A controlled, measurable system for discovering local businesses, auditing their digital presence, scoring addressable opportunities, generating truthful demo experiences, and supporting human-approved sales workflows.
 
-> **Status:** Sprint 1 foundation implemented. Provider integrations remain disabled.
+> **Status:** Sprint 2 discovery foundation implemented. External providers remain disabled by default.
 
 ## Product thesis
 
@@ -71,7 +71,7 @@ Their code, licenses, source terms, and external platform policies must be revie
 
 The repository bootstrap defines the architecture. **Sprint 1** establishes the monorepo, FastAPI core, PostgreSQL, Redis, migrations, campaign/business/provenance models, lead state machine, manual lead import, tests, lint/type checking, and developer documentation.
 
-Do **not** implement Maps scraping, Places enrichment, AI demo generation, automated outreach, or production deployment during Sprint 1.
+Sprint 2 adds a provider-neutral discovery adapter and conservative normalization/dedupe. Maps scraping remains disabled by default and is never permission for outreach. Places enrichment, browser auditing, scoring execution, AI demo generation, automated outreach, and production deployment remain out of scope.
 
 ## Local bootstrap target
 
@@ -96,6 +96,14 @@ Manual import uses `POST /v1/campaigns/{campaign_id}/import` with either
 `{"format":"json","records":[...]}` or `{"format":"csv","csv_text":"..."}`.
 The endpoint records provenance, contacts, an initial `DISCOVERED` event, and
 rejects exact duplicates within the campaign.
+
+Discovery uses `POST /v1/campaigns/{campaign_id}/discover` with a body such as
+`{"queries":["cafes"],"max_results":5,"idempotency_key":"pilot-1"}`. The
+route invokes the configured `DiscoveryAdapter`, persists a `DISCOVER_CAMPAIGN`
+job, and returns the same job/result for repeated idempotent requests. Identity
+matching is conservative: source ID, trustworthy phone, normalized domain, and
+name plus locality/address. Conflicting matches are recorded as ambiguous and
+are not auto-merged.
 
 Codex may refine this as long as the resulting workflow is documented and consistent with the architecture.
 
