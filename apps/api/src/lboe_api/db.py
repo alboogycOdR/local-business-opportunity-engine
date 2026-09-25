@@ -155,6 +155,59 @@ class DiscoveryCandidate(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class Website(Base):
+    __tablename__ = "websites"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    discovered_url: Mapped[str] = mapped_column(String(1000))
+    normalized_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    final_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    http_status: Mapped[int | None] = mapped_column(nullable=True)
+    resolution_status: Mapped[str] = mapped_column(String(40))
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AuditRun(Base):
+    __tablename__ = "audit_runs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    website_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("websites.id"), nullable=True, index=True)
+    auditor_version: Mapped[str] = mapped_column(String(100))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="running", index=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    technical_metadata: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+
+
+class AuditFinding(Base):
+    __tablename__ = "audit_findings"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    audit_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("audit_runs.id"), index=True)
+    code: Mapped[str] = mapped_column(String(100))
+    category: Mapped[str] = mapped_column(String(50))
+    severity: Mapped[str] = mapped_column(String(30))
+    deterministic: Mapped[bool] = mapped_column(default=True)
+    status: Mapped[str] = mapped_column(String(40))
+    observed_value: Mapped[dict[str, Any] | None] = mapped_column(JsonType, nullable=True)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    source_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    confidence: Mapped[float] = mapped_column(Float)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    auditor_version: Mapped[str] = mapped_column(String(100))
+
+
+class AuditArtifact(Base):
+    __tablename__ = "audit_artifacts"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    audit_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("audit_runs.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(50))
+    path: Mapped[str] = mapped_column(String(1000))
+    mime_type: Mapped[str] = mapped_column(String(100))
+    byte_size: Mapped[int | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 def make_engine(database_url: str) -> Any:
     kwargs: dict[str, Any] = {"pool_pre_ping": True, "future": True}
     if database_url.startswith("sqlite"):

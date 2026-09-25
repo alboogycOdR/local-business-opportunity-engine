@@ -44,3 +44,14 @@
 
 **Decision:** labels and UI must avoid implying that a high score means the business itself is bad.  
 **Reason:** the score measures addressable digital gap and delivery fit.
+
+## ADR-010 — Lightweight audits may start from discovery
+
+**Decision:** A homepage-only digital audit may transition a canonical
+`DISCOVERED` business through `AUDITING` to `AUDITED`; the transition remains
+recorded as a pipeline event. Deep enrichment is still a separate future
+stage.
+**Reason:** Sprint 2 discovery already stores a business-owned website, while
+waiting for a future enrichment worker would prevent the objective baseline
+audit. This edge is intentionally narrow and does not authorize scoring,
+outreach, or transactional site actions.

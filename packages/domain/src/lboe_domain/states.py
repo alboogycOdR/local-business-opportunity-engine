@@ -35,7 +35,9 @@ class LeadState(StrEnum):
 # Explicit edges keep lifecycle changes auditable and prevent callers from
 # skipping qualification, consent, or human review gates.
 ALLOWED_TRANSITIONS: Final[dict[LeadState, frozenset[LeadState]]] = {
-    LeadState.DISCOVERED: frozenset({LeadState.DEDUPED, LeadState.REJECTED}),
+    # Lightweight website audits may run before enrichment; this edge is
+    # explicit and auditable, while deep enrichment remains a separate path.
+    LeadState.DISCOVERED: frozenset({LeadState.DEDUPED, LeadState.REJECTED, LeadState.AUDITING}),
     LeadState.DEDUPED: frozenset({LeadState.QUALIFIED, LeadState.REJECTED}),
     LeadState.QUALIFIED: frozenset({LeadState.ENRICHING, LeadState.REJECTED}),
     LeadState.ENRICHING: frozenset({LeadState.ENRICHED, LeadState.ENRICHMENT_FAILED}),

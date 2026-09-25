@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, HTTPException, Query
 from lboe_domain import (
     ALLOWED_TRANSITIONS,
+    AuditRequest,
     DiscoveryRequest,
     DiscoveryValidationError,
     InvalidTransition,
@@ -24,14 +25,19 @@ from lboe_domain import (
     validate_transition,
 )
 from lboe_maps_scraper import MapsScraperAdapter, MapsScraperError
+from lboe_website_auditor import PlaywrightAuditAdapter
 from pydantic import BaseModel, Field
 from redis import Redis
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from .audit_service import audit_idempotency_key, execute_audit
 from .config import Settings
 from .db import (
+    AuditArtifact,
+    AuditFinding,
+    AuditRun,
     Base,
     Business,
     BusinessExternalIdentity,
@@ -42,6 +48,7 @@ from .db import (
     PipelineEvent,
     SourceObservation,
     SuppressionEntry,
+    Website,
     make_engine,
 )
 from .discovery_service import discovery_idempotency_key, execute_discovery
@@ -58,12 +65,18 @@ discovery_adapter = MapsScraperAdapter(
     poll_interval_seconds=settings.discovery_poll_interval_seconds,
     max_concurrency=settings.discovery_max_concurrency,
 )
+audit_adapter: Any = PlaywrightAuditAdapter(settings.audit_artifact_root, settings.audit_max_concurrency)
 
 
 def set_discovery_adapter(adapter: Any) -> None:
     """Replace the adapter in tests/local tooling without changing route code."""
     global discovery_adapter
     discovery_adapter = adapter
+
+
+def set_audit_adapter(adapter: Any) -> None:
+    global audit_adapter
+    audit_adapter = adapter
 
 
 @asynccontextmanager
@@ -107,6 +120,13 @@ class TransitionRequest(BaseModel):
 class SuppressionRequest(BaseModel):
     reason: str = Field(min_length=1)
     channel: str | None = None
+
+
+class AuditRequestBody(BaseModel):
+    website_url: str | None = None
+    timeout_seconds: float = Field(default=30, gt=0, le=120)
+    max_pages: int = Field(default=2, ge=1, le=3)
+    idempotency_key: str | None = Field(default=None, max_length=300)
 
 
 def db_session() -> Generator[Session, None, None]:
@@ -278,6 +298,116 @@ def get_business(business_id: uuid.UUID, session: Session = Depends(db_session))
     if business is None:
         raise HTTPException(status_code=404, detail="business_not_found")
     return business_dict(business, session)
+
+
+def audit_dict(run: AuditRun, session: Session) -> dict[str, Any]:
+    website = session.get(Website, run.website_id) if run.website_id else None
+    findings = session.scalars(select(AuditFinding).where(AuditFinding.audit_run_id == run.id)).all()
+    artifacts = session.scalars(select(AuditArtifact).where(AuditArtifact.audit_run_id == run.id)).all()
+    return {
+        "id": str(run.id),
+        "business_id": str(run.business_id),
+        "website_id": str(run.website_id) if run.website_id else None,
+        "auditor_version": run.auditor_version,
+        "status": run.status,
+        "started_at": run.started_at,
+        "completed_at": run.completed_at,
+        "error_summary": run.error_summary,
+        "website": {
+            "discovered_url": website.discovered_url,
+            "normalized_url": website.normalized_url,
+            "final_url": website.final_url,
+            "http_status": website.http_status,
+            "resolution_status": website.resolution_status,
+            "checked_at": website.checked_at,
+        }
+        if website
+        else None,
+        "findings": [
+            {
+                "code": f.code,
+                "category": f.category,
+                "severity": f.severity,
+                "deterministic": f.deterministic,
+                "status": f.status,
+                "observed_value": f.observed_value,
+                "evidence": f.evidence,
+                "source_url": f.source_url,
+                "observed_at": f.observed_at,
+                "confidence": f.confidence,
+                "auditor_version": f.auditor_version,
+            }
+            for f in findings
+        ],
+        "artifacts": [
+            {"kind": a.kind, "path": a.path, "mime_type": a.mime_type, "byte_size": a.byte_size} for a in artifacts
+        ],
+        "technical_metadata": run.technical_metadata,
+    }
+
+
+@app.post("/v1/businesses/{business_id}/audit")
+async def audit_business(
+    business_id: uuid.UUID, payload: AuditRequestBody, session: Session = Depends(db_session)
+) -> dict[str, Any]:
+    business = session.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    website_url = payload.website_url
+    if website_url is None:
+        website_contact = session.scalar(
+            select(Contact).where(Contact.business_id == business.id, Contact.channel == "website")
+        )
+        website_url = website_contact.value if website_contact else None
+    request = AuditRequest(
+        business_id=business_id,
+        website_url=website_url,
+        timeout_seconds=payload.timeout_seconds,
+        max_pages=payload.max_pages,
+        idempotency_key=payload.idempotency_key,
+    )
+    key = audit_idempotency_key(request)
+    existing = session.scalar(select(Job).where(Job.idempotency_key == key))
+    if existing and existing.payload.get("audit_run_id"):
+        run = session.get(AuditRun, uuid.UUID(str(existing.payload["audit_run_id"])))
+        if run:
+            return audit_dict(run, session)
+    job = Job(
+        idempotency_key=key, job_type="AUDIT_WEBSITE", status="running", payload={"business_id": str(business_id)}
+    )
+    session.add(job)
+    session.commit()
+    try:
+        run, _result = await execute_audit(session, audit_adapter, business, request)
+    except Exception as exc:  # noqa: BLE001
+        job.status = "failed"
+        job.payload = {"business_id": str(business_id), "error": type(exc).__name__}
+        session.commit()
+        raise HTTPException(status_code=502, detail={"error": "audit_failed", "job_id": str(job.id)}) from exc
+    job.status = "succeeded"
+    job.payload = {"business_id": str(business_id), "audit_run_id": str(run.id)}
+    session.commit()
+    return audit_dict(run, session)
+
+
+@app.get("/v1/businesses/{business_id}/audits")
+def list_audits(business_id: uuid.UUID, session: Session = Depends(db_session)) -> list[dict[str, Any]]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    return [
+        audit_dict(run, session)
+        for run in session.scalars(
+            select(AuditRun).where(AuditRun.business_id == business_id).order_by(AuditRun.started_at)
+        ).all()
+    ]
+
+
+@app.get("/v1/audits/{audit_id}")
+def get_audit(audit_id: uuid.UUID, session: Session = Depends(db_session)) -> dict[str, Any]:
+    run = session.get(AuditRun, audit_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="audit_not_found")
+    return audit_dict(run, session)
 
 
 @app.get("/v1/campaigns/{campaign_id}/discovery-candidates")

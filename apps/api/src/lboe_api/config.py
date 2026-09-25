@@ -18,4 +18,6 @@ class Settings(BaseSettings):
     discovery_poll_interval_seconds: float = 2.0
     discovery_max_concurrency: int = 1
     discovery_timeout_seconds: float = 300.0
+    audit_artifact_root: str = "artifacts/audits"
+    audit_max_concurrency: int = 1
     model_config = SettingsConfigDict(env_prefix="LBOE_", extra="ignore")
