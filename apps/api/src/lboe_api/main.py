@@ -23,6 +23,7 @@ from lboe_domain import (
     LeadState,
     OpportunityScoreRequest,
     OutreachDraftRequest,
+    OutreachReadinessRequest,
     normalize_domain,
     normalize_phone,
     normalize_text,
@@ -64,9 +65,12 @@ from .db import (
     OpportunityComponent,
     OpportunityHold,
     OpportunityScore,
+    OutreachChannelApproval,
     OutreachDraftCheck,
     OutreachDraftMessage,
     OutreachDraftPackage,
+    OutreachReadinessCheck,
+    OutreachReadinessReview,
     PipelineEvent,
     SourceObservation,
     SuppressionEntry,
@@ -79,6 +83,7 @@ from .discovery_service import discovery_idempotency_key, execute_discovery
 from .logging import configure_logging
 from .outreach_service import VERSION as OUTREACH_VERSION
 from .outreach_service import build_messages, safety_checks
+from .readiness_service import READINESS_CHANNELS, readiness_checks
 from .scoring_service import execute_score, score_idempotency_key
 
 logger = logging.getLogger("lboe.api")
@@ -1257,6 +1262,234 @@ def get_outreach_draft(package_id: uuid.UUID, session: Session = Depends(db_sess
     if package is None:
         raise HTTPException(status_code=404, detail="outreach_draft_not_found")
     return outreach_draft_dict(package, session)
+
+
+def readiness_dict(review: OutreachReadinessReview, session: Session) -> dict[str, Any]:
+    channels = session.scalars(
+        select(OutreachChannelApproval).where(OutreachChannelApproval.outreach_readiness_review_id == review.id)
+    ).all()
+    checks = session.scalars(
+        select(OutreachReadinessCheck).where(OutreachReadinessCheck.outreach_readiness_review_id == review.id)
+    ).all()
+    return {
+        "id": str(review.id),
+        "business_id": str(review.business_id),
+        "outreach_draft_package_id": str(review.outreach_draft_package_id),
+        "decision": review.decision,
+        "reviewer": review.reviewer,
+        "notes": review.notes,
+        "consent_basis_type": review.consent_basis_type,
+        "consent_basis_notes": review.consent_basis_notes,
+        "resulting_business_state": review.resulting_business_state,
+        "created_at": review.created_at,
+        "selected_channels": [item.channel for item in channels if item.approved],
+        "channel_approvals": [
+            {
+                "id": str(item.id),
+                "channel": item.channel,
+                "outreach_draft_message_id": str(item.outreach_draft_message_id)
+                if item.outreach_draft_message_id
+                else None,
+                "approved": item.approved,
+                "notes": item.notes,
+            }
+            for item in channels
+        ],
+        "checks": [
+            {
+                "id": str(item.id),
+                "code": item.code,
+                "passed": item.passed,
+                "notes": item.notes,
+                "evidence": item.evidence,
+            }
+            for item in checks
+        ],
+        "safe_next_action": "manual_operator_review_no_automatic_sending",
+    }
+
+
+@app.post("/v1/businesses/{business_id}/outreach-readiness")
+def create_outreach_readiness(
+    business_id: uuid.UUID,
+    request: OutreachReadinessRequest,
+    session: Session = Depends(db_session),
+) -> dict[str, Any]:
+    business = session.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    package = session.get(OutreachDraftPackage, request.outreach_draft_package_id)
+    if package is None or package.business_id != business_id:
+        return {
+            "status": "not_outreach_ready_eligible",
+            "reason": "draft_package_not_found",
+            "business_id": str(business_id),
+        }
+    key = f"OUTREACH_READINESS:{business_id}:{package.id}:{request.decision}:{request.idempotency_key or 'default'}"
+    existing = session.scalar(select(Job).where(Job.idempotency_key == key))
+    if existing and existing.payload.get("review_id"):
+        review = session.get(OutreachReadinessReview, uuid.UUID(str(existing.payload["review_id"])))
+        if review:
+            return readiness_dict(review, session)
+    current_state = LeadState(business.state)
+    if current_state not in {LeadState.APPROVED_FOR_OUTREACH, LeadState.CONSENT_PENDING}:
+        return {
+            "status": "not_outreach_ready_eligible",
+            "reason": "invalid_business_state",
+            "business_id": str(business_id),
+        }
+    messages = session.scalars(select(OutreachDraftMessage).where(OutreachDraftMessage.package_id == package.id)).all()
+    message_by_channel = {message.channel: message for message in messages}
+    selected = list(dict.fromkeys(request.selected_channels))
+    selected_supported = all(channel in READINESS_CHANNELS for channel in selected)
+    selected_exist = all(channel in message_by_channel for channel in selected)
+    selected_nonempty = all(
+        bool(message_by_channel[channel].body.strip()) for channel in selected if channel in message_by_channel
+    )
+    stored_checks = session.scalars(select(OutreachDraftCheck).where(OutreachDraftCheck.package_id == package.id)).all()
+    draft_safety = package.status == "ready" and bool(stored_checks) and all(item.passed for item in stored_checks)
+    brief = session.scalar(
+        select(BusinessBrief).where(BusinessBrief.business_id == business_id).order_by(BusinessBrief.created_at.desc())
+    )
+    risks = (
+        session.scalars(select(BusinessBriefRisk).where(BusinessBriefRisk.business_brief_id == brief.id)).all()
+        if brief
+        else []
+    )
+    suppression = session.scalar(select(SuppressionEntry).where(SuppressionEntry.business_id == business_id)) is None
+    no_ambiguous = not any(risk.code == "AMBIGUOUS_IDENTITY" for risk in risks)
+    no_do_not_contact = not any(risk.code in {"DO_NOT_CONTACT", "SUPPRESSED"} for risk in risks)
+    checks = readiness_checks(
+        package_ready=package.status == "ready",
+        selected_channels_supported=selected_supported,
+        selected_messages_exist=selected_exist,
+        selected_messages_nonempty=selected_nonempty,
+        draft_safety_checks_passed=draft_safety,
+        no_suppression=suppression,
+        no_do_not_contact_hold=no_do_not_contact
+        and (brief is None or brief.recommended_next_action != "do_not_contact"),
+        no_ambiguous_identity_hold=no_ambiguous,
+        consent_basis_type=request.consent_basis_type,
+        consent_notes=request.consent_basis_notes,
+        decision=request.decision,
+        reviewer_present=bool(request.reviewer.strip()),
+    )
+    failed = [check["code"] for check in checks if not check["passed"]]
+    if request.decision == "prepare_consent_review":
+        if current_state != LeadState.APPROVED_FOR_OUTREACH or failed:
+            return {
+                "status": "not_outreach_ready_eligible",
+                "reason": failed[0] if failed else "invalid_prepare_state",
+                "business_id": str(business_id),
+            }
+        target_state = LeadState.CONSENT_PENDING
+    elif request.decision == "approve_for_manual_outreach":
+        if failed:
+            return {
+                "status": "not_outreach_ready_eligible",
+                "reason": failed[0],
+                "failed_checks": failed,
+                "business_id": str(business_id),
+            }
+        if not selected:
+            return {
+                "status": "not_outreach_ready_eligible",
+                "reason": "channels_required",
+                "business_id": str(business_id),
+            }
+        target_state = LeadState.OUTREACH_READY
+    elif request.decision == "suppress_business":
+        target_state = LeadState.SUPPRESSED
+    else:
+        target_state = current_state
+    if target_state != current_state:
+        try:
+            validate_transition(current_state, target_state)
+        except InvalidTransition as exc:
+            raise HTTPException(status_code=409, detail={"error": "invalid_transition", "message": str(exc)}) from exc
+    job = Job(
+        job_type="PREPARE_OUTREACH_READINESS",
+        idempotency_key=key,
+        status="running",
+        payload={"business_id": str(business_id)},
+    )
+    session.add(job)
+    session.commit()
+    review = OutreachReadinessReview(
+        business_id=business_id,
+        outreach_draft_package_id=package.id,
+        decision=request.decision,
+        reviewer=request.reviewer,
+        notes=request.notes,
+        consent_basis_type=request.consent_basis_type,
+        consent_basis_notes=request.consent_basis_notes,
+        resulting_business_state=target_state.value,
+    )
+    session.add(review)
+    session.flush()
+    for check in checks:
+        session.add(
+            OutreachReadinessCheck(
+                outreach_readiness_review_id=review.id,
+                code=check["code"],
+                passed=check["passed"],
+                notes=check["notes"],
+                evidence=check["evidence"],
+            )
+        )
+    for channel in selected:
+        message = message_by_channel.get(channel)
+        session.add(
+            OutreachChannelApproval(
+                outreach_readiness_review_id=review.id,
+                channel=channel,
+                outreach_draft_message_id=message.id if message else None,
+                approved=request.decision == "approve_for_manual_outreach",
+                notes=None,
+            )
+        )
+    if request.decision == "approve_for_manual_outreach":
+        for message in messages:
+            message.approved = message.channel in selected
+    if request.decision == "suppress_business":
+        session.add(
+            SuppressionEntry(business_id=business_id, reason=request.notes or "operator suppression", channel=None)
+        )
+    if target_state != current_state:
+        business.state = target_state.value
+        session.add(
+            PipelineEvent(
+                business_id=business_id,
+                from_state=current_state.value,
+                to_state=target_state.value,
+                actor=request.reviewer,
+                reason=f"outreach readiness: {request.decision}",
+            )
+        )
+    job.status = "succeeded"
+    job.payload = {"business_id": str(business_id), "review_id": str(review.id), "resulting_state": target_state.value}
+    session.commit()
+    return readiness_dict(review, session)
+
+
+@app.get("/v1/businesses/{business_id}/outreach-readiness")
+def list_outreach_readiness(business_id: uuid.UUID, session: Session = Depends(db_session)) -> list[dict[str, Any]]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    reviews = session.scalars(
+        select(OutreachReadinessReview)
+        .where(OutreachReadinessReview.business_id == business_id)
+        .order_by(OutreachReadinessReview.created_at)
+    ).all()
+    return [readiness_dict(review, session) for review in reviews]
+
+
+@app.get("/v1/outreach-readiness/{review_id}")
+def get_outreach_readiness(review_id: uuid.UUID, session: Session = Depends(db_session)) -> dict[str, Any]:
+    review = session.get(OutreachReadinessReview, review_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="outreach_readiness_not_found")
+    return readiness_dict(review, session)
 
 
 @app.get("/v1/campaigns/{campaign_id}/discovery-candidates")

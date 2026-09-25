@@ -40,6 +40,13 @@ from .outreach import (
     OutreachDraftRequest,
     OutreachOffer,
 )
+from .readiness import (
+    OutreachChannelApproval,
+    OutreachReadinessCheck,
+    OutreachReadinessDecision,
+    OutreachReadinessRequest,
+    OutreachReadinessResult,
+)
 from .review import DemoReviewChecklist, DemoReviewNote, DemoReviewRequest, DemoReviewResult
 from .scoring import (
     OpportunityScoreComponent,
@@ -101,6 +108,11 @@ __all__ = [
     "OutreachDraftPackage",
     "OutreachDraftRequest",
     "OutreachOffer",
+    "OutreachChannelApproval",
+    "OutreachReadinessCheck",
+    "OutreachReadinessDecision",
+    "OutreachReadinessRequest",
+    "OutreachReadinessResult",
     "WebsiteResolutionResult",
     "transition",
     "validate_transition",
