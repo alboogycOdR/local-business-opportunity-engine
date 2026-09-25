@@ -2,7 +2,7 @@
 
 A controlled, measurable system for discovering local businesses, auditing their digital presence, scoring addressable opportunities, generating truthful demo experiences, and supporting human-approved sales workflows.
 
-> **Status:** Codex-ready bootstrap. Production implementation begins with Sprint 1.
+> **Status:** Sprint 1 foundation implemented. Provider integrations remain disabled.
 
 ## Product thesis
 
@@ -75,15 +75,27 @@ Do **not** implement Maps scraping, Places enrichment, AI demo generation, autom
 
 ## Local bootstrap target
 
-After Sprint 1, the intended development command should be close to:
+Local Sprint 1 setup (PowerShell or a Unix shell):
 
 ```bash
 docker compose up -d postgres redis
 python -m venv .venv
 # activate .venv
-pip install -e ./apps/api -e ./apps/worker -e ./packages/domain -e ./packages/scoring
+pip install -e .
 pytest
 ```
+
+Start dependencies with `docker compose up -d postgres redis`, then run the API with
+`uvicorn lboe_api.main:app --reload`. Copy `.env.example` to `.env` only when you
+need local overrides. Apply `infrastructure/database/migrations/0001_initial.sql`
+to PostgreSQL with `psql`; the API also creates the same tables on startup for a
+fresh local/test database. Readiness requires both PostgreSQL and Redis; health is
+process-only.
+
+Manual import uses `POST /v1/campaigns/{campaign_id}/import` with either
+`{"format":"json","records":[...]}` or `{"format":"csv","csv_text":"..."}`.
+The endpoint records provenance, contacts, an initial `DISCOVERED` event, and
+rejects exact duplicates within the campaign.
 
 Codex may refine this as long as the resulting workflow is documented and consistent with the architecture.
 

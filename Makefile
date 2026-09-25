@@ -28,3 +28,9 @@ format:
 	ruff format .
 
 check: lint typecheck test
+
+install:
+	python -m pip install -e .
+
+api:
+	uvicorn lboe_api.main:app --reload

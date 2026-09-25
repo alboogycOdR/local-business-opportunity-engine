@@ -12,7 +12,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install bootstrap test dependency
-        run: python -m pip install --upgrade pip pytest
-      - name: Validate bootstrap contract
-        run: python -m pytest tests/test_bootstrap_contract.py
+      - name: Install project
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - name: Check formatting
+        run: ruff format --check .
+      - name: Lint
+        run: ruff check .
+      - name: Typecheck
+        run: mypy apps packages tests
+      - name: Test
+        run: pytest
