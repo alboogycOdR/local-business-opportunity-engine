@@ -1,1 +1,3 @@
-"""Deterministic scoring package placeholder for later sprint implementation."""
+from .engine import ScoreContext, score_opportunity
+
+__all__ = ["ScoreContext", "score_opportunity"]

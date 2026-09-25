@@ -19,6 +19,7 @@ from lboe_domain import (
     DiscoveryValidationError,
     InvalidTransition,
     LeadState,
+    OpportunityScoreRequest,
     normalize_domain,
     normalize_phone,
     normalize_text,
@@ -45,6 +46,9 @@ from .db import (
     Contact,
     DiscoveryCandidate,
     Job,
+    OpportunityComponent,
+    OpportunityHold,
+    OpportunityScore,
     PipelineEvent,
     SourceObservation,
     SuppressionEntry,
@@ -53,6 +57,7 @@ from .db import (
 )
 from .discovery_service import discovery_idempotency_key, execute_discovery
 from .logging import configure_logging
+from .scoring_service import execute_score, score_idempotency_key
 
 logger = logging.getLogger("lboe.api")
 settings = Settings()
@@ -120,6 +125,10 @@ class TransitionRequest(BaseModel):
 class SuppressionRequest(BaseModel):
     reason: str = Field(min_length=1)
     channel: str | None = None
+
+
+class ScoreRequestBody(BaseModel):
+    idempotency_key: str | None = Field(default=None, max_length=300)
 
 
 class AuditRequestBody(BaseModel):
@@ -408,6 +417,100 @@ def get_audit(audit_id: uuid.UUID, session: Session = Depends(db_session)) -> di
     if run is None:
         raise HTTPException(status_code=404, detail="audit_not_found")
     return audit_dict(run, session)
+
+
+def score_dict(score: OpportunityScore, session: Session) -> dict[str, Any]:
+    components = session.scalars(
+        select(OpportunityComponent).where(OpportunityComponent.opportunity_score_id == score.id)
+    ).all()
+    holds = session.scalars(select(OpportunityHold).where(OpportunityHold.opportunity_score_id == score.id)).all()
+    return {
+        "id": str(score.id),
+        "business_id": str(score.business_id),
+        "audit_run_id": str(score.audit_run_id) if score.audit_run_id else None,
+        "score": score.score,
+        "band": score.band,
+        "version": score.version,
+        "recommended_next_action": score.recommended_next_action,
+        "created_at": score.created_at,
+        "components": [
+            {
+                "code": item.code,
+                "category": item.category,
+                "points": item.points,
+                "max_points": item.max_points,
+                "evidence": item.evidence,
+                "source_type": item.source_type,
+                "confidence": item.confidence,
+            }
+            for item in components
+        ],
+        "holds": [
+            {"code": item.code, "reason": item.reason, "severity": item.severity, "evidence": item.evidence}
+            for item in holds
+        ],
+    }
+
+
+@app.post("/v1/businesses/{business_id}/score")
+async def score_business(
+    business_id: uuid.UUID,
+    payload: ScoreRequestBody | None = None,
+    session: Session = Depends(db_session),
+) -> dict[str, Any]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    request = OpportunityScoreRequest(
+        business_id=business_id,
+        idempotency_key=payload.idempotency_key if payload else None,
+    )
+    key = score_idempotency_key(request)
+    existing = session.scalar(select(Job).where(Job.idempotency_key == key))
+    if existing and existing.payload.get("score_id"):
+        score = session.get(OpportunityScore, uuid.UUID(str(existing.payload["score_id"])))
+        if score:
+            return score_dict(score, session)
+    job = Job(
+        idempotency_key=key,
+        job_type="CALCULATE_SCORE",
+        status="running",
+        payload={"business_id": str(business_id)},
+    )
+    session.add(job)
+    session.commit()
+    business = session.get(Business, business_id)
+    assert business is not None
+    try:
+        score, _result = await execute_score(session, request, business)
+    except Exception as exc:  # noqa: BLE001
+        job.status = "failed"
+        job.payload = {"business_id": str(business_id), "error": type(exc).__name__}
+        session.commit()
+        raise HTTPException(status_code=500, detail={"error": "score_failed", "job_id": str(job.id)}) from exc
+    job.status = "succeeded"
+    job.payload = {"business_id": str(business_id), "score_id": str(score.id)}
+    session.commit()
+    return score_dict(score, session)
+
+
+@app.get("/v1/businesses/{business_id}/scores")
+def list_scores(business_id: uuid.UUID, session: Session = Depends(db_session)) -> list[dict[str, Any]]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    scores = session.scalars(
+        select(OpportunityScore)
+        .where(OpportunityScore.business_id == business_id)
+        .order_by(OpportunityScore.created_at)
+    ).all()
+    return [score_dict(item, session) for item in scores]
+
+
+@app.get("/v1/scores/{score_id}")
+def get_score(score_id: uuid.UUID, session: Session = Depends(db_session)) -> dict[str, Any]:
+    score = session.get(OpportunityScore, score_id)
+    if score is None:
+        raise HTTPException(status_code=404, detail="score_not_found")
+    return score_dict(score, session)
 
 
 @app.get("/v1/campaigns/{campaign_id}/discovery-candidates")

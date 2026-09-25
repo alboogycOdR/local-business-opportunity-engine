@@ -208,6 +208,41 @@ class AuditArtifact(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class OpportunityScore(Base):
+    __tablename__ = "opportunity_scores"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    audit_run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("audit_runs.id"), nullable=True, index=True)
+    version: Mapped[str] = mapped_column(String(100))
+    score: Mapped[int] = mapped_column()
+    band: Mapped[str] = mapped_column(String(20))
+    recommended_next_action: Mapped[str] = mapped_column(String(50))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OpportunityComponent(Base):
+    __tablename__ = "opportunity_components"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    opportunity_score_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("opportunity_scores.id"), index=True)
+    code: Mapped[str] = mapped_column(String(100))
+    category: Mapped[str] = mapped_column(String(50))
+    points: Mapped[int] = mapped_column()
+    max_points: Mapped[int] = mapped_column()
+    evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    source_type: Mapped[str] = mapped_column(String(80))
+    confidence: Mapped[float] = mapped_column(Float)
+
+
+class OpportunityHold(Base):
+    __tablename__ = "opportunity_holds"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    opportunity_score_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("opportunity_scores.id"), index=True)
+    code: Mapped[str] = mapped_column(String(80))
+    reason: Mapped[str] = mapped_column(String(500))
+    severity: Mapped[str] = mapped_column(String(30))
+    evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+
+
 def make_engine(database_url: str) -> Any:
     kwargs: dict[str, Any] = {"pool_pre_ping": True, "future": True}
     if database_url.startswith("sqlite"):

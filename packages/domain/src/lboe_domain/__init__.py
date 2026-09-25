@@ -22,6 +22,14 @@ from .discovery import (
     normalize_text,
 )
 from .fakes import FakeDiscoveryAdapter
+from .scoring import (
+    OpportunityScoreComponent,
+    OpportunityScoreHold,
+    OpportunityScoreRequest,
+    OpportunityScoreResult,
+    RecommendedNextAction,
+    ScoreBand,
+)
 from .states import ALLOWED_TRANSITIONS, InvalidTransition, LeadState, transition, validate_transition
 
 __all__ = [
@@ -45,6 +53,12 @@ __all__ = [
     "normalize_domain",
     "normalize_phone",
     "normalize_text",
+    "OpportunityScoreComponent",
+    "OpportunityScoreHold",
+    "OpportunityScoreRequest",
+    "OpportunityScoreResult",
+    "RecommendedNextAction",
+    "ScoreBand",
     "WebsiteResolutionResult",
     "transition",
     "validate_transition",
