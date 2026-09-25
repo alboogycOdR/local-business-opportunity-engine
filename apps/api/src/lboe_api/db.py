@@ -346,6 +346,29 @@ class DemoQaRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class DemoReview(Base):
+    __tablename__ = "demo_reviews"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    demo_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("generated_demos.id"), index=True)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    decision: Mapped[str] = mapped_column(String(40))
+    reviewer: Mapped[str] = mapped_column(String(200))
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    resulting_demo_status: Mapped[str] = mapped_column(String(40))
+    resulting_business_state: Mapped[str] = mapped_column(String(40))
+
+
+class DemoReviewChecklistItem(Base):
+    __tablename__ = "demo_review_checklist_items"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    demo_review_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("demo_reviews.id"), index=True)
+    code: Mapped[str] = mapped_column(String(100))
+    label: Mapped[str] = mapped_column(String(300))
+    passed: Mapped[bool] = mapped_column(default=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 def make_engine(database_url: str) -> Any:
     kwargs: dict[str, Any] = {"pool_pre_ping": True, "future": True}
     if database_url.startswith("sqlite"):

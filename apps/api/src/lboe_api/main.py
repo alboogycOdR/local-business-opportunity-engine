@@ -16,6 +16,7 @@ from lboe_domain import (
     ALLOWED_TRANSITIONS,
     AuditRequest,
     BusinessBriefRequest,
+    DemoReviewRequest,
     DiscoveryRequest,
     DiscoveryValidationError,
     InvalidTransition,
@@ -52,6 +53,8 @@ from .db import (
     Contact,
     DemoArtifact,
     DemoQaRun,
+    DemoReview,
+    DemoReviewChecklistItem,
     DiscoveryCandidate,
     GeneratedDemo,
     GeneratedDemoClaim,
@@ -73,6 +76,21 @@ from .logging import configure_logging
 from .scoring_service import execute_score, score_idempotency_key
 
 logger = logging.getLogger("lboe.api")
+
+REVIEW_CHECKLIST = (
+    ("concept_banner_visible", "Concept banner visible"),
+    ("business_name_correct", "Business name correct"),
+    ("not_claiming_official_site", "Does not claim official site"),
+    ("no_fake_prices", "No fake prices"),
+    ("no_fake_testimonials", "No fake testimonials"),
+    ("no_unsupported_awards", "No unsupported awards"),
+    ("contact_links_safe", "Contact links safe"),
+    ("source_claims_supported", "Source claims supported"),
+    ("no_outreach_content", "No outreach content"),
+    ("appropriate_demo_type", "Appropriate demo type"),
+    ("preview_opens_locally", "Preview opens locally"),
+    ("no_sensitive_or_prohibited_content", "No sensitive or prohibited content"),
+)
 settings = Settings()
 engine = make_engine(settings.database_url)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
@@ -653,6 +671,39 @@ def demo_dict(demo: GeneratedDemo, session: Session) -> dict[str, Any]:
     claims = session.scalars(select(GeneratedDemoClaim).where(GeneratedDemoClaim.demo_id == demo.id)).all()
     artifacts = session.scalars(select(DemoArtifact).where(DemoArtifact.demo_id == demo.id)).all()
     qa = session.scalar(select(DemoQaRun).where(DemoQaRun.demo_id == demo.id).order_by(DemoQaRun.created_at.desc()))
+    reviews = session.scalars(
+        select(DemoReview).where(DemoReview.demo_id == demo.id).order_by(DemoReview.created_at)
+    ).all()
+    review_rows = []
+    for review in reviews:
+        items = session.scalars(
+            select(DemoReviewChecklistItem).where(DemoReviewChecklistItem.demo_review_id == review.id)
+        ).all()
+        review_rows.append(
+            {
+                "id": str(review.id),
+                "decision": review.decision,
+                "reviewer": review.reviewer,
+                "notes": review.notes,
+                "created_at": review.created_at,
+                "resulting_demo_status": review.resulting_demo_status,
+                "resulting_business_state": review.resulting_business_state,
+                "checklist": [
+                    {"code": item.code, "label": item.label, "passed": item.passed, "notes": item.notes}
+                    for item in items
+                ],
+            }
+        )
+    next_actions = {
+        "qa_passed": ["approve", "reject", "request_changes", "request_regeneration", "mark_needs_manual_edit"],
+        "review_pending": ["approve", "reject", "request_changes", "request_regeneration", "mark_needs_manual_edit"],
+        "approved": [],
+        "rejected": [],
+        "changes_requested": ["request_changes", "request_regeneration", "mark_needs_manual_edit"],
+        "regeneration_requested": [],
+        "manual_edit_required": ["request_changes", "request_regeneration"],
+        "qa_failed": [],
+    }
     return {
         "id": str(demo.id),
         "business_id": str(demo.business_id),
@@ -689,6 +740,8 @@ def demo_dict(demo: GeneratedDemo, session: Session) -> dict[str, Any]:
             {"kind": x.kind, "path": x.path, "mime_type": x.mime_type, "byte_size": x.byte_size} for x in artifacts
         ],
         "qa": {"status": qa.status, "checks": qa.checks, "created_at": qa.created_at} if qa else None,
+        "reviews": review_rows,
+        "safe_next_actions": next_actions.get(demo.status, []),
     }
 
 
@@ -856,6 +909,164 @@ def get_demo(demo_id: uuid.UUID, session: Session = Depends(db_session)) -> dict
     if demo is None:
         raise HTTPException(status_code=404, detail="demo_not_found")
     return demo_dict(demo, session)
+
+
+@app.post("/v1/demos/{demo_id}/review")
+def review_demo(
+    demo_id: uuid.UUID, request: DemoReviewRequest, session: Session = Depends(db_session)
+) -> dict[str, Any]:
+    demo = session.get(GeneratedDemo, demo_id)
+    if demo is None:
+        raise HTTPException(status_code=404, detail="demo_not_found")
+    business = session.get(Business, demo.business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    allowed_statuses = {"qa_passed", "review_pending", "changes_requested", "manual_edit_required"}
+    if demo.status not in allowed_statuses:
+        raise HTTPException(status_code=409, detail={"error": "demo_not_reviewable", "status": demo.status})
+    qa = session.scalar(select(DemoQaRun).where(DemoQaRun.demo_id == demo.id).order_by(DemoQaRun.created_at.desc()))
+    artifacts = session.scalars(select(DemoArtifact).where(DemoArtifact.demo_id == demo.id)).all()
+    from pathlib import Path
+
+    if request.decision == "approve":
+        if qa is None or qa.status != "passed" or not all(bool(value) for value in qa.checks.values()):
+            raise HTTPException(status_code=409, detail="demo_qa_not_passed")
+        if not artifacts or any(not Path(item.path).is_file() for item in artifacts):
+            raise HTTPException(status_code=409, detail="demo_artifact_missing")
+        brief = session.get(BusinessBrief, demo.brief_id)
+        brief_risks = session.scalars(
+            select(BusinessBriefRisk).where(BusinessBriefRisk.business_brief_id == demo.brief_id)
+        ).all()
+        if business.state == LeadState.SUPPRESSED.value:
+            raise HTTPException(status_code=409, detail="business_suppressed")
+        if session.scalar(select(SuppressionEntry).where(SuppressionEntry.business_id == business.id)):
+            raise HTTPException(status_code=409, detail="business_suppressed")
+        if any(risk.code == "AMBIGUOUS_IDENTITY" for risk in brief_risks):
+            raise HTTPException(status_code=409, detail="ambiguous_identity")
+        if (brief and brief.recommended_next_action == "do_not_contact") or any(
+            risk.code in {"SUPPRESSED", "DO_NOT_CONTACT"} for risk in brief_risks
+        ):
+            raise HTTPException(status_code=409, detail="do_not_contact_hold")
+        supplied = {item.code: item for item in request.checklist}
+        missing = [code for code, _label in REVIEW_CHECKLIST if code not in supplied]
+        failed = [code for code, _label in REVIEW_CHECKLIST if code in supplied and not supplied[code].passed]
+        if missing or failed:
+            raise HTTPException(
+                status_code=409, detail={"error": "checklist_incomplete", "missing": missing, "failed": failed}
+            )
+        target_demo_status = "approved"
+        target_state = LeadState.APPROVED_FOR_OUTREACH
+    elif request.decision == "reject":
+        target_demo_status = "rejected"
+        target_state = LeadState.REVIEW_PENDING
+    elif request.decision == "request_changes":
+        target_demo_status = "changes_requested"
+        target_state = LeadState.REVIEW_PENDING
+    elif request.decision == "request_regeneration":
+        target_demo_status = "regeneration_requested"
+        target_state = LeadState.DEMO_QUEUED
+    else:
+        target_demo_status = "manual_edit_required"
+        target_state = LeadState.REVIEW_PENDING
+    current_state = LeadState(business.state)
+    if target_state != current_state:
+        try:
+            validate_transition(current_state, target_state)
+        except InvalidTransition as exc:
+            raise HTTPException(status_code=409, detail={"error": "invalid_transition", "message": str(exc)}) from exc
+    checklist = {item.code: item for item in request.checklist}
+    review = DemoReview(
+        demo_id=demo.id,
+        business_id=business.id,
+        decision=request.decision,
+        reviewer=request.reviewer,
+        notes=request.notes,
+        resulting_demo_status=target_demo_status,
+        resulting_business_state=target_state.value,
+    )
+    session.add(review)
+    session.flush()
+    for code, label in REVIEW_CHECKLIST:
+        item = checklist.get(code)
+        session.add(
+            DemoReviewChecklistItem(
+                demo_review_id=review.id,
+                code=code,
+                label=label,
+                passed=item.passed if item else False,
+                notes=item.notes if item else None,
+            )
+        )
+    demo.status = target_demo_status
+    if target_state != current_state:
+        business.state = target_state.value
+        session.add(
+            PipelineEvent(
+                business_id=business.id,
+                from_state=current_state.value,
+                to_state=target_state.value,
+                actor=request.reviewer,
+                reason=f"demo review: {request.decision}",
+            )
+        )
+    session.commit()
+    return demo_dict(demo, session)
+
+
+@app.get("/v1/demos/{demo_id}/reviews")
+def list_demo_reviews(demo_id: uuid.UUID, session: Session = Depends(db_session)) -> list[dict[str, Any]]:
+    if session.get(GeneratedDemo, demo_id) is None:
+        raise HTTPException(status_code=404, detail="demo_not_found")
+    reviews = session.scalars(
+        select(DemoReview).where(DemoReview.demo_id == demo_id).order_by(DemoReview.created_at)
+    ).all()
+    result = []
+    for review in reviews:
+        items = session.scalars(
+            select(DemoReviewChecklistItem).where(DemoReviewChecklistItem.demo_review_id == review.id)
+        ).all()
+        result.append(
+            {
+                "id": str(review.id),
+                "demo_id": str(review.demo_id),
+                "business_id": str(review.business_id),
+                "decision": review.decision,
+                "reviewer": review.reviewer,
+                "notes": review.notes,
+                "created_at": review.created_at,
+                "resulting_demo_status": review.resulting_demo_status,
+                "resulting_business_state": review.resulting_business_state,
+                "checklist": [
+                    {"code": item.code, "label": item.label, "passed": item.passed, "notes": item.notes}
+                    for item in items
+                ],
+            }
+        )
+    return result
+
+
+@app.get("/v1/reviews/{review_id}")
+def get_review(review_id: uuid.UUID, session: Session = Depends(db_session)) -> dict[str, Any]:
+    review = session.get(DemoReview, review_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="review_not_found")
+    items = session.scalars(
+        select(DemoReviewChecklistItem).where(DemoReviewChecklistItem.demo_review_id == review.id)
+    ).all()
+    return {
+        "id": str(review.id),
+        "demo_id": str(review.demo_id),
+        "business_id": str(review.business_id),
+        "decision": review.decision,
+        "reviewer": review.reviewer,
+        "notes": review.notes,
+        "created_at": review.created_at,
+        "resulting_demo_status": review.resulting_demo_status,
+        "resulting_business_state": review.resulting_business_state,
+        "checklist": [
+            {"code": item.code, "label": item.label, "passed": item.passed, "notes": item.notes} for item in items
+        ],
+    }
 
 
 @app.get("/v1/campaigns/{campaign_id}/discovery-candidates")

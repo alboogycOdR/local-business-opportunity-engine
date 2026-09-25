@@ -32,6 +32,7 @@ from .discovery import (
     normalize_text,
 )
 from .fakes import FakeDiscoveryAdapter
+from .review import DemoReviewChecklist, DemoReviewNote, DemoReviewRequest, DemoReviewResult
 from .scoring import (
     OpportunityScoreComponent,
     OpportunityScoreHold,
@@ -82,6 +83,10 @@ __all__ = [
     "DemoQaResult",
     "DemoSection",
     "GeneratedDemo",
+    "DemoReviewChecklist",
+    "DemoReviewNote",
+    "DemoReviewRequest",
+    "DemoReviewResult",
     "WebsiteResolutionResult",
     "transition",
     "validate_transition",

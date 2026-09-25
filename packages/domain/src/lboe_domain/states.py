@@ -49,7 +49,9 @@ ALLOWED_TRANSITIONS: Final[dict[LeadState, frozenset[LeadState]]] = {
     LeadState.DEMO_QUEUED: frozenset({LeadState.DEMO_GENERATED, LeadState.QA_FAILED}),
     LeadState.QA_FAILED: frozenset({LeadState.DEMO_QUEUED, LeadState.ARCHIVED}),
     LeadState.DEMO_GENERATED: frozenset({LeadState.REVIEW_PENDING}),
-    LeadState.REVIEW_PENDING: frozenset({LeadState.REJECTED, LeadState.APPROVED_FOR_OUTREACH}),
+    # Human review may send a demo back through the controlled generation
+    # queue when the operator explicitly requests regeneration.
+    LeadState.REVIEW_PENDING: frozenset({LeadState.REJECTED, LeadState.APPROVED_FOR_OUTREACH, LeadState.DEMO_QUEUED}),
     LeadState.APPROVED_FOR_OUTREACH: frozenset({LeadState.CONSENT_PENDING, LeadState.SUPPRESSED}),
     LeadState.CONSENT_PENDING: frozenset({LeadState.OUTREACH_READY, LeadState.SUPPRESSED}),
     LeadState.OUTREACH_READY: frozenset({LeadState.CONTACTED, LeadState.SUPPRESSED}),
