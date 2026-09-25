@@ -50,7 +50,12 @@ from .db import (
     BusinessExternalIdentity,
     Campaign,
     Contact,
+    DemoArtifact,
+    DemoQaRun,
     DiscoveryCandidate,
+    GeneratedDemo,
+    GeneratedDemoClaim,
+    GeneratedDemoSection,
     Job,
     OpportunityComponent,
     OpportunityHold,
@@ -61,6 +66,8 @@ from .db import (
     Website,
     make_engine,
 )
+from .demo_generator import VERSION as DEMO_VERSION
+from .demo_generator import qa_demo, render_demo, write_artifacts
 from .discovery_service import discovery_idempotency_key, execute_discovery
 from .logging import configure_logging
 from .scoring_service import execute_score, score_idempotency_key
@@ -635,6 +642,220 @@ def get_brief(brief_id: uuid.UUID, session: Session = Depends(db_session)) -> di
     if brief is None:
         raise HTTPException(status_code=404, detail="brief_not_found")
     return brief_dict(brief, session)
+
+
+def demo_dict(demo: GeneratedDemo, session: Session) -> dict[str, Any]:
+    sections = session.scalars(
+        select(GeneratedDemoSection)
+        .where(GeneratedDemoSection.demo_id == demo.id)
+        .order_by(GeneratedDemoSection.sort_order)
+    ).all()
+    claims = session.scalars(select(GeneratedDemoClaim).where(GeneratedDemoClaim.demo_id == demo.id)).all()
+    artifacts = session.scalars(select(DemoArtifact).where(DemoArtifact.demo_id == demo.id)).all()
+    qa = session.scalar(select(DemoQaRun).where(DemoQaRun.demo_id == demo.id).order_by(DemoQaRun.created_at.desc()))
+    return {
+        "id": str(demo.id),
+        "business_id": str(demo.business_id),
+        "brief_id": str(demo.brief_id),
+        "score_id": str(demo.score_id) if demo.score_id else None,
+        "audit_run_id": str(demo.audit_run_id) if demo.audit_run_id else None,
+        "version": demo.version,
+        "demo_type": demo.demo_type,
+        "status": demo.status,
+        "preview_path": demo.preview_path,
+        "preview_url": demo.preview_url,
+        "created_at": demo.created_at,
+        "sections": [
+            {
+                "section_type": x.section_type,
+                "heading": x.heading,
+                "body": x.body,
+                "sort_order": x.sort_order,
+                "evidence": x.evidence,
+            }
+            for x in sections
+        ],
+        "claims": [
+            {
+                "claim_text": x.claim_text,
+                "claim_type": x.claim_type,
+                "evidence": x.evidence,
+                "confidence": x.confidence,
+                "approved": x.approved,
+            }
+            for x in claims
+        ],
+        "artifacts": [
+            {"kind": x.kind, "path": x.path, "mime_type": x.mime_type, "byte_size": x.byte_size} for x in artifacts
+        ],
+        "qa": {"status": qa.status, "checks": qa.checks, "created_at": qa.created_at} if qa else None,
+    }
+
+
+@app.post("/v1/businesses/{business_id}/demo")
+def create_demo(
+    business_id: uuid.UUID, payload: dict[str, Any] | None = None, session: Session = Depends(db_session)
+) -> dict[str, Any]:
+    business = session.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    latest_brief = session.scalar(
+        select(BusinessBrief).where(BusinessBrief.business_id == business_id).order_by(BusinessBrief.created_at.desc())
+    )
+    if latest_brief is None:
+        return {"status": "not_demo_eligible", "reason": "brief_required", "business_id": str(business_id)}
+    body = payload or {}
+    brief = brief_dict(latest_brief, session)
+    action = latest_brief.recommended_next_action
+    fact_labels = {fact["label"] for values in brief.get("facts", {}).values() for fact in values}
+    if business.state == LeadState.SUPPRESSED.value:
+        action = "do_not_contact"
+    if any(risk.get("code") == "AMBIGUOUS_IDENTITY" for risk in brief.get("risks", [])):
+        action = "manual_review"
+    if action in {"generate_demo", "conversion_upgrade_offer", "technical_cleanup_offer"} and (
+        "Business name" not in fact_labels or "Category" not in fact_labels
+    ):
+        action = "insufficient_facts"
+    blocked_reasons = {
+        "score_only": "score_only",
+        "manual_review": "ambiguous_identity",
+        "do_not_contact": "do_not_contact",
+        "audit_required": "audit_required",
+        "archive": "archive",
+        "insufficient_facts": "insufficient_facts",
+    }
+    reason = blocked_reasons.get(action)
+    if reason is not None:
+        key = f"GENERATE_DEMO:{business_id}:{latest_brief.id}:{body.get('idempotency_key', 'default')}"
+        existing = session.scalar(select(Job).where(Job.idempotency_key == key))
+        if existing:
+            return {
+                "status": "not_demo_eligible",
+                "reason": reason,
+                "business_id": str(business_id),
+                "job_id": str(existing.id),
+            }
+        job = Job(
+            job_type="GENERATE_DEMO",
+            idempotency_key=key,
+            status="not_eligible",
+            payload={"business_id": str(business_id), "reason": reason},
+        )
+        session.add(job)
+        session.commit()
+        return {"status": "not_demo_eligible", "reason": reason, "business_id": str(business_id), "job_id": str(job.id)}
+    demo_type = body.get("demo_type") or (
+        "conversion_upgrade"
+        if action == "conversion_upgrade_offer"
+        else "technical_cleanup_preview"
+        if action == "technical_cleanup_offer"
+        else "starter_website"
+    )
+    key = f"GENERATE_DEMO:{business_id}:{latest_brief.id}:{demo_type}:{body.get('idempotency_key', 'default')}"
+    existing = session.scalar(select(Job).where(Job.idempotency_key == key))
+    if existing and existing.payload.get("demo_id"):
+        demo = session.get(GeneratedDemo, uuid.UUID(str(existing.payload["demo_id"])))
+        if demo:
+            return demo_dict(demo, session)
+    job = Job(
+        job_type="GENERATE_DEMO", idempotency_key=key, status="running", payload={"business_id": str(business_id)}
+    )
+    session.add(job)
+    session.commit()
+    demo = GeneratedDemo(
+        business_id=business_id,
+        brief_id=latest_brief.id,
+        score_id=latest_brief.score_id,
+        audit_run_id=latest_brief.audit_run_id,
+        version=DEMO_VERSION,
+        demo_type=demo_type,
+        status="rendering",
+        preview_path="",
+    )
+    session.add(demo)
+    session.commit()
+    try:
+        rendered = render_demo(demo.id, business, brief, demo_type)
+        artifact_root = __import__("pathlib").Path(settings.demo_artifact_root)
+        artifact_rows = write_artifacts(artifact_root, demo.id, rendered)
+        qa_status, checks = qa_demo(artifact_root, demo.id, rendered)
+        demo.preview_path = str(artifact_root / "demos" / str(demo.id) / "index.html")
+        demo.status = "qa_passed" if qa_status == "passed" else "qa_failed"
+        for section in rendered.sections:
+            session.add(
+                GeneratedDemoSection(
+                    demo_id=demo.id,
+                    section_type=section.section_type,
+                    heading=section.heading,
+                    body=section.body,
+                    sort_order=section.sort_order,
+                    evidence=section.evidence,
+                )
+            )
+        for claim in rendered.claims:
+            session.add(
+                GeneratedDemoClaim(
+                    demo_id=demo.id,
+                    claim_text=claim.claim_text,
+                    claim_type=claim.claim_type,
+                    evidence=claim.evidence,
+                    confidence=claim.confidence,
+                    approved=claim.approved,
+                )
+            )
+        for item in artifact_rows:
+            session.add(DemoArtifact(demo_id=demo.id, **item))
+        session.add(DemoQaRun(demo_id=demo.id, status=qa_status, checks=checks))
+        if qa_status == "passed":
+            current = LeadState(business.state)
+            if current == LeadState.SCORED:
+                for target in (LeadState.DEMO_QUEUED, LeadState.DEMO_GENERATED, LeadState.REVIEW_PENDING):
+                    validate_transition(current, target)
+                    session.add(
+                        PipelineEvent(
+                            business_id=business.id,
+                            from_state=current.value,
+                            to_state=target.value,
+                            actor="system",
+                            reason="concept demo generated and QA passed",
+                        )
+                    )
+                    current = target
+                    business.state = target.value
+        job.status = "succeeded" if qa_status == "passed" else "failed"
+        job.payload = {"business_id": str(business_id), "demo_id": str(demo.id), "qa_status": qa_status}
+        session.commit()
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        failed_job = session.get(Job, job.id)
+        if failed_job:
+            failed_job.status = "failed"
+            failed_job.payload = {"business_id": str(business_id), "error": type(exc).__name__}
+            session.commit()
+        raise HTTPException(
+            status_code=500, detail={"error": "demo_failed", "job_id": str(failed_job.id) if failed_job else None}
+        ) from exc
+    return demo_dict(demo, session)
+
+
+@app.get("/v1/businesses/{business_id}/demos")
+def list_demos(business_id: uuid.UUID, session: Session = Depends(db_session)) -> list[dict[str, Any]]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    return [
+        demo_dict(item, session)
+        for item in session.scalars(
+            select(GeneratedDemo).where(GeneratedDemo.business_id == business_id).order_by(GeneratedDemo.created_at)
+        ).all()
+    ]
+
+
+@app.get("/v1/demos/{demo_id}")
+def get_demo(demo_id: uuid.UUID, session: Session = Depends(db_session)) -> dict[str, Any]:
+    demo = session.get(GeneratedDemo, demo_id)
+    if demo is None:
+        raise HTTPException(status_code=404, detail="demo_not_found")
+    return demo_dict(demo, session)
 
 
 @app.get("/v1/campaigns/{campaign_id}/discovery-candidates")

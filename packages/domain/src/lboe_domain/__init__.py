@@ -19,6 +19,7 @@ from .brief import (
     BusinessBriefRisk,
     BusinessBriefSection,
 )
+from .demo import DemoArtifact, DemoClaim, DemoGenerationRequest, DemoQaResult, DemoSection, GeneratedDemo
 from .discovery import (
     CandidateBusiness,
     DiscoveryAdapter,
@@ -75,6 +76,12 @@ __all__ = [
     "BusinessBriefResult",
     "BusinessBriefRisk",
     "BusinessBriefSection",
+    "DemoArtifact",
+    "DemoClaim",
+    "DemoGenerationRequest",
+    "DemoQaResult",
+    "DemoSection",
+    "GeneratedDemo",
     "WebsiteResolutionResult",
     "transition",
     "validate_transition",
