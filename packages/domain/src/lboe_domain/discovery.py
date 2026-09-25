@@ -17,6 +17,8 @@ class DiscoveryRequest(BaseModel):
     campaign_id: UUID
     queries: list[str] = Field(min_length=1, max_length=25)
     geography: str | None = None
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
     max_results: int = Field(default=25, ge=1, le=100)
     timeout_seconds: float = Field(default=300, gt=0, le=3600)
     idempotency_key: str | None = Field(default=None, max_length=300)
@@ -41,6 +43,10 @@ class CandidateBusiness(BaseModel):
 
 class DiscoveryAdapter(Protocol):
     async def discover(self, request: DiscoveryRequest) -> list[CandidateBusiness]: ...
+
+
+class DiscoveryValidationError(ValueError):
+    """A provider-neutral request cannot be executed as specified."""
 
 
 @dataclass(frozen=True)

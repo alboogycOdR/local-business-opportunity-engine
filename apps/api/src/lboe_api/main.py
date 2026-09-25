@@ -15,6 +15,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from lboe_domain import (
     ALLOWED_TRANSITIONS,
     DiscoveryRequest,
+    DiscoveryValidationError,
     InvalidTransition,
     LeadState,
     normalize_domain,
@@ -33,8 +34,10 @@ from .config import Settings
 from .db import (
     Base,
     Business,
+    BusinessExternalIdentity,
     Campaign,
     Contact,
+    DiscoveryCandidate,
     Job,
     PipelineEvent,
     SourceObservation,
@@ -170,6 +173,8 @@ def get_campaign(campaign_id: uuid.UUID, session: Session = Depends(db_session))
 class DiscoveryRequestBody(BaseModel):
     queries: list[str] = Field(min_length=1, max_length=25)
     geography: str | None = None
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
     max_results: int = Field(default=25, ge=1, le=100)
     timeout_seconds: float = Field(default=300, gt=0, le=3600)
     idempotency_key: str | None = Field(default=None, max_length=300)
@@ -199,6 +204,13 @@ async def discover_campaign(
     session.refresh(job)
     try:
         result = await execute_discovery(session, discovery_adapter, request)
+    except DiscoveryValidationError as exc:
+        job.status = "failed"
+        job.payload = {"request": request.model_dump(mode="json"), "error": str(exc)}
+        session.commit()
+        raise HTTPException(
+            status_code=422, detail={"error": "invalid_discovery_request", "job_id": str(job.id)}
+        ) from exc
     except MapsScraperError as exc:
         job.status = "failed"
         job.payload = {"request": request.model_dump(mode="json"), "error": str(exc)}
@@ -218,6 +230,9 @@ async def discover_campaign(
 def business_dict(business: Business, session: Session) -> dict[str, Any]:
     observations = session.scalars(select(SourceObservation).where(SourceObservation.business_id == business.id)).all()
     contacts = session.scalars(select(Contact).where(Contact.business_id == business.id)).all()
+    external_identities = session.scalars(
+        select(BusinessExternalIdentity).where(BusinessExternalIdentity.business_id == business.id)
+    ).all()
     return {
         "id": str(business.id),
         "campaign_id": str(business.campaign_id),
@@ -228,6 +243,10 @@ def business_dict(business: Business, session: Session) -> dict[str, Any]:
         "state": business.state,
         "identity_key": business.identity_key,
         "contacts": [{"channel": c.channel, "value": c.value} for c in contacts],
+        "external_identities": [
+            {"source": identity.source, "source_id": identity.source_id, "confidence": identity.confidence}
+            for identity in external_identities
+        ],
         "provenance": [
             {
                 "field": o.field,
@@ -259,6 +278,30 @@ def get_business(business_id: uuid.UUID, session: Session = Depends(db_session))
     if business is None:
         raise HTTPException(status_code=404, detail="business_not_found")
     return business_dict(business, session)
+
+
+@app.get("/v1/campaigns/{campaign_id}/discovery-candidates")
+def list_discovery_candidates(
+    campaign_id: uuid.UUID,
+    candidate_status: str | None = Query(default=None, alias="status"),
+    session: Session = Depends(db_session),
+) -> list[dict[str, Any]]:
+    query = select(DiscoveryCandidate).where(DiscoveryCandidate.campaign_id == campaign_id)
+    if candidate_status:
+        query = query.where(DiscoveryCandidate.status == candidate_status)
+    return [
+        {
+            "id": str(candidate.id),
+            "source": candidate.source,
+            "source_id": candidate.source_id,
+            "status": candidate.status,
+            "normalized_payload": candidate.normalized_payload,
+            "provenance": candidate.provenance,
+            "dedupe_evidence": candidate.dedupe_evidence,
+            "created_at": candidate.created_at,
+        }
+        for candidate in session.scalars(query.order_by(DiscoveryCandidate.created_at)).all()
+    ]
 
 
 @app.post("/v1/campaigns/{campaign_id}/import")

@@ -8,7 +8,7 @@ import io
 from datetime import UTC, datetime
 
 import httpx
-from lboe_domain import CandidateBusiness, DiscoveryRequest
+from lboe_domain import CandidateBusiness, DiscoveryRequest, DiscoveryValidationError
 
 
 class MapsScraperError(RuntimeError):
@@ -37,6 +37,11 @@ class MapsScraperAdapter:
     async def discover(self, request: DiscoveryRequest) -> list[CandidateBusiness]:
         if not self.enabled or self.kill_switch:
             raise MapsScraperError("maps scraper adapter is disabled by feature flag or kill switch")
+        if request.latitude is None or request.longitude is None:
+            location = request.geography or "no geography supplied"
+            raise DiscoveryValidationError(
+                f"maps discovery requires resolved latitude and longitude; geography={location!r} was not resolved"
+            )
         async with self._semaphore:
             client = self._client or httpx.AsyncClient(timeout=request.timeout_seconds)
             close_client = self._client is None
@@ -53,7 +58,14 @@ class MapsScraperAdapter:
             "name": f"lboe-{request.campaign_id}",
             "keywords": request.queries,
             "lang": "en",
-            "depth": request.max_results,
+            # Upstream depth means scrape depth/pages, not a row limit. Keep it
+            # conservative and cap returned normalized candidates separately.
+            "zoom": 15,
+            "lat": str(request.latitude),
+            "lon": str(request.longitude),
+            "fast_mode": False,
+            "radius": 10000,
+            "depth": 5,
             "max_time": int(request.timeout_seconds),
             "email": False,
         }

@@ -15,6 +15,12 @@ LBOE_DISCOVERY_MAX_CONCURRENCY=1
 LBOE_DISCOVERY_TIMEOUT_SECONDS=300
 ```
 
+Discovery callers must provide `latitude` and `longitude` in addition to an
+optional human-readable `geography`; the adapter does not geocode. It sends
+`lat`/`lon` as strings with `zoom=15`, `radius=10000`, `fast_mode=false`, a
+conservative `depth=5`, `email=false`, and the configured `max_time`. The
+request's `max_results` is a returned-candidate cap, not an upstream depth.
+
 The adapter submits one conservative job at a time through `POST /api/v1/jobs`,
 polls `GET /api/v1/jobs/{id}`, and downloads the lean CSV result from
 `GET /api/v1/jobs/{id}/download`. It stores only normalized discovery fields and

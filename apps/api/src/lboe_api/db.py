@@ -52,6 +52,17 @@ class Business(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class BusinessExternalIdentity(Base):
+    __tablename__ = "business_external_identities"
+    __table_args__ = (UniqueConstraint("source", "source_id", name="uq_external_identity_source_id"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    source: Mapped[str] = mapped_column(String(80))
+    source_id: Mapped[str] = mapped_column(String(300))
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    confidence: Mapped[float] = mapped_column(Float)
+
+
 class BusinessAlias(Base):
     __tablename__ = "business_aliases"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -121,10 +132,26 @@ class DedupeEvidence(Base):
     matched_business_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("businesses.id"), nullable=True, index=True
     )
+    discovery_candidate_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("discovery_candidates.id"), nullable=True, index=True
+    )
     method: Mapped[str] = mapped_column(String(50))
     reason: Mapped[str] = mapped_column(String(500))
     confidence: Mapped[float] = mapped_column(Float)
     merged: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DiscoveryCandidate(Base):
+    __tablename__ = "discovery_candidates"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    campaign_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("campaigns.id"), index=True)
+    source: Mapped[str] = mapped_column(String(80))
+    source_id: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="ambiguous", index=True)
+    normalized_payload: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    provenance: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    dedupe_evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

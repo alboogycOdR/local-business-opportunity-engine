@@ -1,9 +1,17 @@
 import asyncio
+import json
 from uuid import uuid4
 
 import httpx
 import pytest
-from lboe_domain import CandidateBusiness, DiscoveryRequest, normalize_domain, normalize_phone, normalize_text
+from lboe_domain import (
+    CandidateBusiness,
+    DiscoveryRequest,
+    DiscoveryValidationError,
+    normalize_domain,
+    normalize_phone,
+    normalize_text,
+)
 from lboe_maps_scraper import MapsScraperAdapter, MapsScraperError
 
 
@@ -15,8 +23,11 @@ def test_normalization_helpers() -> None:
 
 
 def test_maps_adapter_normalizes_only_discovery_fields() -> None:
+    submitted: list[dict[str, object]] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/v1/jobs":
+            submitted.append(json.loads(request.content))
             return httpx.Response(201, json={"id": "job-1"})
         if request.url.path == "/api/v1/jobs/job-1":
             return httpx.Response(200, json={"Status": "ok", "secret": "discard"})
@@ -27,7 +38,9 @@ def test_maps_adapter_normalizes_only_discovery_fields() -> None:
     async def run() -> list[CandidateBusiness]:
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         adapter = MapsScraperAdapter(enabled=True, client=client, poll_interval_seconds=0)
-        result = await adapter.discover(DiscoveryRequest(campaign_id=uuid4(), queries=["cafes"], max_results=5))
+        result = await adapter.discover(
+            DiscoveryRequest(campaign_id=uuid4(), queries=["cafes"], max_results=5, latitude=-29.85, longitude=31.02)
+        )
         await client.aclose()
         return result
 
@@ -35,6 +48,13 @@ def test_maps_adapter_normalizes_only_discovery_fields() -> None:
     assert result[0].display_name == "Cafe"
     assert result[0].provenance["source_type"] == "scraper"
     assert not hasattr(result[0], "review_rating")
+    assert submitted[0]["lat"] == "-29.85"
+    assert submitted[0]["lon"] == "31.02"
+    assert submitted[0]["zoom"] == 15
+    assert submitted[0]["radius"] == 10000
+    assert submitted[0]["depth"] == 5
+    assert submitted[0]["email"] is False
+    assert submitted[0]["max_time"] == 300
 
 
 def test_maps_adapter_timeout_and_kill_switch() -> None:
@@ -42,5 +62,14 @@ def test_maps_adapter_timeout_and_kill_switch() -> None:
         adapter = MapsScraperAdapter(enabled=False)
         with pytest.raises(MapsScraperError):
             await adapter.discover(DiscoveryRequest(campaign_id=uuid4(), queries=["cafes"]))
+
+    asyncio.run(run())
+
+
+def test_maps_adapter_requires_resolved_coordinates() -> None:
+    async def run() -> None:
+        adapter = MapsScraperAdapter(enabled=True)
+        with pytest.raises(DiscoveryValidationError, match="requires resolved latitude and longitude"):
+            await adapter.discover(DiscoveryRequest(campaign_id=uuid4(), queries=["cafes"], geography="Durban"))
 
     asyncio.run(run())
