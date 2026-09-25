@@ -1,0 +1,16 @@
+vertical: hair_salon
+version: 1
+priority_conversion_paths:
+  - online_booking
+  - whatsapp
+  - click_to_call
+priority_content:
+  - services
+  - pricing_or_quote_path
+  - gallery
+  - location
+  - opening_hours
+score_emphasis:
+  booking: high
+  whatsapp: high
+  mobile_visual_quality: high

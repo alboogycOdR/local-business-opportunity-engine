@@ -1,0 +1,3 @@
+-- Sprint 1 migration placeholder.
+-- Codex should replace this file with the actual migration mechanism and schema.
+-- Required tables are documented in docs/SPRINT_01.md and docs/BLUEPRINT.md.

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lboe.local/schemas/candidate-business.schema.json",
+  "title": "CandidateBusiness",
+  "type": "object",
+  "required": ["display_name", "source", "observed_at"],
+  "properties": {
+    "display_name": {"type": "string", "minLength": 1},
+    "category": {"type": ["string", "null"]},
+    "locality": {"type": ["string", "null"]},
+    "address_text": {"type": ["string", "null"]},
+    "phone": {"type": ["string", "null"]},
+    "website": {"type": ["string", "null"], "format": "uri"},
+    "source": {"type": "string", "minLength": 1},
+    "source_ref": {"type": ["string", "null"]},
+    "source_url": {"type": ["string", "null"], "format": "uri"},
+    "observed_at": {"type": "string", "format": "date-time"}
+  },
+  "additionalProperties": false
+}

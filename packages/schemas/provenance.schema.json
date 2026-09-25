@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lboe.local/schemas/provenance.schema.json",
+  "title": "Provenance",
+  "type": "object",
+  "required": ["field", "source_type", "observed_at", "storage_policy", "confidence"],
+  "properties": {
+    "field": {"type": "string", "minLength": 1},
+    "source_type": {"type": "string", "minLength": 1},
+    "source_ref": {"type": ["string", "null"]},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": ["string", "null"], "format": "date-time"},
+    "storage_policy": {"enum": ["persistent", "ephemeral", "reference_only"]},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+  },
+  "additionalProperties": false
+}

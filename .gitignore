@@ -1,0 +1,50 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+dist/
+build/
+.coverage
+htmlcov/
+
+# Node / web
+node_modules/
+.next/
+out/
+coverage/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local data / generated artifacts
+.data/
+data/
+artifacts/
+previews/
+screenshots/
+*.sqlite3
+*.db
+
+# Prospect/source exports
+prospects/
+exports/
+raw-data/
+
+# Docker/runtime
+*.pid
+*.log
