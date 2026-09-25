@@ -243,6 +243,53 @@ class OpportunityHold(Base):
     evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
 
 
+class BusinessBrief(Base):
+    __tablename__ = "business_briefs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    score_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("opportunity_scores.id"), nullable=True, index=True)
+    audit_run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("audit_runs.id"), nullable=True, index=True)
+    version: Mapped[str] = mapped_column(String(100))
+    summary: Mapped[str] = mapped_column(Text)
+    recommended_next_action: Mapped[str] = mapped_column(String(50))
+    confidence: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class BusinessBriefFact(Base):
+    __tablename__ = "business_brief_facts"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_brief_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("business_briefs.id"), index=True)
+    fact_type: Mapped[str] = mapped_column(String(50))
+    label: Mapped[str] = mapped_column(String(200))
+    value: Mapped[Any] = mapped_column(JsonType, nullable=True)
+    source_type: Mapped[str] = mapped_column(String(80))
+    evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    confidence: Mapped[float] = mapped_column(Float)
+
+
+class BusinessBriefOpportunity(Base):
+    __tablename__ = "business_brief_opportunities"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_brief_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("business_briefs.id"), index=True)
+    code: Mapped[str] = mapped_column(String(100))
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text)
+    priority: Mapped[str] = mapped_column(String(30))
+    evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+
+
+class BusinessBriefRisk(Base):
+    __tablename__ = "business_brief_risks"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_brief_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("business_briefs.id"), index=True)
+    code: Mapped[str] = mapped_column(String(100))
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String(30))
+    evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+
+
 def make_engine(database_url: str) -> Any:
     kwargs: dict[str, Any] = {"pool_pre_ping": True, "future": True}
     if database_url.startswith("sqlite"):

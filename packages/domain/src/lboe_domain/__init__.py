@@ -10,6 +10,15 @@ from .audit import (
     FakeAuditAdapter,
     WebsiteResolutionResult,
 )
+from .brief import (
+    BusinessBriefFact,
+    BusinessBriefOpportunity,
+    BusinessBriefRecommendedAction,
+    BusinessBriefRequest,
+    BusinessBriefResult,
+    BusinessBriefRisk,
+    BusinessBriefSection,
+)
 from .discovery import (
     CandidateBusiness,
     DiscoveryAdapter,
@@ -59,6 +68,13 @@ __all__ = [
     "OpportunityScoreResult",
     "RecommendedNextAction",
     "ScoreBand",
+    "BusinessBriefFact",
+    "BusinessBriefOpportunity",
+    "BusinessBriefRecommendedAction",
+    "BusinessBriefRequest",
+    "BusinessBriefResult",
+    "BusinessBriefRisk",
+    "BusinessBriefSection",
     "WebsiteResolutionResult",
     "transition",
     "validate_transition",

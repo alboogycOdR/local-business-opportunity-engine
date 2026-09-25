@@ -15,6 +15,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from lboe_domain import (
     ALLOWED_TRANSITIONS,
     AuditRequest,
+    BusinessBriefRequest,
     DiscoveryRequest,
     DiscoveryValidationError,
     InvalidTransition,
@@ -34,6 +35,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from .audit_service import audit_idempotency_key, execute_audit
+from .brief_service import brief_idempotency_key, execute_brief
 from .config import Settings
 from .db import (
     AuditArtifact,
@@ -41,6 +43,10 @@ from .db import (
     AuditRun,
     Base,
     Business,
+    BusinessBrief,
+    BusinessBriefFact,
+    BusinessBriefOpportunity,
+    BusinessBriefRisk,
     BusinessExternalIdentity,
     Campaign,
     Contact,
@@ -511,6 +517,124 @@ def get_score(score_id: uuid.UUID, session: Session = Depends(db_session)) -> di
     if score is None:
         raise HTTPException(status_code=404, detail="score_not_found")
     return score_dict(score, session)
+
+
+def brief_dict(brief: BusinessBrief, session: Session) -> dict[str, Any]:
+    facts = session.scalars(select(BusinessBriefFact).where(BusinessBriefFact.business_brief_id == brief.id)).all()
+    opportunities = session.scalars(
+        select(BusinessBriefOpportunity).where(BusinessBriefOpportunity.business_brief_id == brief.id)
+    ).all()
+    risks = session.scalars(select(BusinessBriefRisk).where(BusinessBriefRisk.business_brief_id == brief.id)).all()
+    action_text = {
+        "score_only": ("Score only", "No immediate demo recommended. Review for light technical cleanup or archive."),
+        "technical_cleanup_offer": (
+            "Technical cleanup review",
+            "Consider a technical cleanup, accessibility, or SEO hygiene offer.",
+        ),
+        "conversion_upgrade_offer": ("Conversion upgrade review", "Consider a conversion upgrade concept."),
+        "generate_demo": ("Concept demo eligible", "Eligible for concept demo generation."),
+        "manual_review": ("Manual review required", "Manual review required before any next step."),
+        "do_not_contact": ("Do not contact", "Do not contact; suppression or policy hold applies."),
+        "audit_required": ("Audit required", "Audit required before recommendation."),
+        "archive": ("Archive", "Archive unless new verified evidence becomes available."),
+    }
+    code = brief.recommended_next_action
+    label, rationale = action_text.get(code, (code, code))
+    by_type: dict[str, list[dict[str, Any]]] = {}
+    for fact in facts:
+        by_type.setdefault(fact.fact_type, []).append(
+            {
+                "label": fact.label,
+                "value": fact.value,
+                "source_type": fact.source_type,
+                "evidence": fact.evidence,
+                "confidence": fact.confidence,
+            }
+        )
+    return {
+        "id": str(brief.id),
+        "business_id": str(brief.business_id),
+        "score_id": str(brief.score_id) if brief.score_id else None,
+        "audit_run_id": str(brief.audit_run_id) if brief.audit_run_id else None,
+        "version": brief.version,
+        "summary": brief.summary,
+        "recommended_action": {"code": code, "label": label, "rationale": rationale},
+        "confidence": brief.confidence,
+        "created_at": brief.created_at,
+        "facts": by_type,
+        "opportunities": [
+            {
+                "code": item.code,
+                "title": item.title,
+                "description": item.description,
+                "priority": item.priority,
+                "evidence": item.evidence,
+            }
+            for item in opportunities
+        ],
+        "risks": [
+            {
+                "code": item.code,
+                "title": item.title,
+                "description": item.description,
+                "severity": item.severity,
+                "evidence": item.evidence,
+            }
+            for item in risks
+        ],
+    }
+
+
+@app.post("/v1/businesses/{business_id}/brief")
+async def create_brief(
+    business_id: uuid.UUID,
+    payload: dict[str, Any] | None = None,
+    session: Session = Depends(db_session),
+) -> dict[str, Any]:
+    business = session.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    request = BusinessBriefRequest(business_id=business_id, idempotency_key=(payload or {}).get("idempotency_key"))
+    key = brief_idempotency_key(request)
+    existing = session.scalar(select(Job).where(Job.idempotency_key == key))
+    if existing and existing.payload.get("brief_id"):
+        brief = session.get(BusinessBrief, uuid.UUID(str(existing.payload["brief_id"])))
+        if brief:
+            return brief_dict(brief, session)
+    job = Job(
+        job_type="GENERATE_BRIEF", idempotency_key=key, status="running", payload={"business_id": str(business_id)}
+    )
+    session.add(job)
+    session.commit()
+    try:
+        brief, _result = await execute_brief(session, request, business)
+    except Exception as exc:  # noqa: BLE001
+        job.status = "failed"
+        job.payload = {"business_id": str(business_id), "error": type(exc).__name__}
+        session.commit()
+        raise HTTPException(status_code=500, detail={"error": "brief_failed", "job_id": str(job.id)}) from exc
+    job.status = "succeeded"
+    job.payload = {"business_id": str(business_id), "brief_id": str(brief.id)}
+    session.commit()
+    return brief_dict(brief, session)
+
+
+@app.get("/v1/businesses/{business_id}/briefs")
+def list_briefs(business_id: uuid.UUID, session: Session = Depends(db_session)) -> list[dict[str, Any]]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    briefs = session.scalars(
+        select(BusinessBrief).where(BusinessBrief.business_id == business_id).order_by(BusinessBrief.created_at)
+    ).all()
+    return [brief_dict(item, session) for item in briefs]
+
+
+@app.get("/v1/briefs/{brief_id}")
+def get_brief(brief_id: uuid.UUID, session: Session = Depends(db_session)) -> dict[str, Any]:
+    brief = session.get(BusinessBrief, brief_id)
+    if brief is None:
+        raise HTTPException(status_code=404, detail="brief_not_found")
+    return brief_dict(brief, session)
 
 
 @app.get("/v1/campaigns/{campaign_id}/discovery-candidates")
