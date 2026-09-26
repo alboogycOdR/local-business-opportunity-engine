@@ -531,7 +531,8 @@ def preview_links(demo_id: uuid.UUID, db: Session = Depends(session)) -> HTMLRes
     ).all()
     rows = (
         "".join(
-            f"<li>{esc(link.label)} · {esc(link.status)} · expires {esc(link.expires_at)} "
+            f"<li>{esc(link.label)} · {esc(link.status)} · expires {esc(link.expires_at)} · "
+            f"accesses {len(db.scalars(select(DemoPreviewAccessEvent).where(DemoPreviewAccessEvent.preview_link_id == link.id)).all())} "
             f"<form method='post' action='/ui/preview-links/{link.id}/revoke'><button>Revoke</button></form></li>"
             for link in links
         )
