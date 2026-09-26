@@ -8,7 +8,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Generator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -88,6 +88,7 @@ from .logging import configure_logging
 from .outreach_service import VERSION as OUTREACH_VERSION
 from .outreach_service import build_messages, safety_checks
 from .readiness_service import READINESS_CHANNELS, readiness_checks
+from .reporting_service import build_pilot_report
 from .scoring_service import execute_score, score_idempotency_key
 
 logger = logging.getLogger("lboe.api")
@@ -1797,6 +1798,45 @@ def get_crm_event(event_id: uuid.UUID, session: Session = Depends(db_session)) -
     if event is None:
         raise HTTPException(status_code=404, detail="crm_event_not_found")
     return crm_event_dict(event)
+
+
+@app.get("/v1/reports/pilot")
+def get_pilot_report(
+    start_date: date | None = None,
+    end_date: date | None = None,
+    vertical: str | None = None,
+    include_details: bool = False,
+    session: Session = Depends(db_session),
+) -> dict[str, Any]:
+    return build_pilot_report(
+        session,
+        vertical=vertical,
+        start_date=start_date,
+        end_date=end_date,
+        include_details=include_details,
+    )
+
+
+@app.get("/v1/campaigns/{campaign_id}/reports/pilot")
+def get_campaign_pilot_report(
+    campaign_id: uuid.UUID,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    include_details: bool = False,
+    session: Session = Depends(db_session),
+) -> dict[str, Any]:
+    if session.get(Campaign, campaign_id) is None:
+        raise HTTPException(status_code=404, detail="campaign_not_found")
+    try:
+        return build_pilot_report(
+            session,
+            campaign_id=campaign_id,
+            start_date=start_date,
+            end_date=end_date,
+            include_details=include_details,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/v1/campaigns/{campaign_id}/discovery-candidates")

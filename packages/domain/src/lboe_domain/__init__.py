@@ -54,6 +54,15 @@ from .readiness import (
     OutreachReadinessRequest,
     OutreachReadinessResult,
 )
+from .reporting import (
+    ConversionMetric,
+    FunnelStageMetric,
+    OperatorWorkloadMetric,
+    PilotReportRequest,
+    PilotReportResult,
+    PilotReportWindow,
+    QualityMetric,
+)
 from .review import DemoReviewChecklist, DemoReviewNote, DemoReviewRequest, DemoReviewResult
 from .scoring import (
     OpportunityScoreComponent,
@@ -129,6 +138,13 @@ __all__ = [
     "LeadNextStep",
     "LeadResponseLogRequest",
     "LeadResponseLogResult",
+    "ConversionMetric",
+    "FunnelStageMetric",
+    "OperatorWorkloadMetric",
+    "PilotReportRequest",
+    "PilotReportResult",
+    "PilotReportWindow",
+    "QualityMetric",
     "WebsiteResolutionResult",
     "transition",
     "validate_transition",
