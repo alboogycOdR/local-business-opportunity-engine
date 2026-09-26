@@ -461,6 +461,25 @@ class OutreachExecutionRecord(Base):
     resulting_business_state: Mapped[str] = mapped_column(String(40))
 
 
+class LeadCrmEvent(Base):
+    __tablename__ = "lead_crm_events"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    outreach_execution_record_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("outreach_execution_records.id"), nullable=True, index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(40))
+    channel: Mapped[str] = mapped_column(String(30))
+    operator: Mapped[str] = mapped_column(String(200))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    summary: Mapped[str] = mapped_column(Text, default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    next_step: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    resulting_business_state: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 def make_engine(database_url: str) -> Any:
     kwargs: dict[str, Any] = {"pool_pre_ping": True, "future": True}
     if database_url.startswith("sqlite"):

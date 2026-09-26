@@ -55,9 +55,9 @@ ALLOWED_TRANSITIONS: Final[dict[LeadState, frozenset[LeadState]]] = {
     LeadState.APPROVED_FOR_OUTREACH: frozenset({LeadState.CONSENT_PENDING, LeadState.SUPPRESSED}),
     LeadState.CONSENT_PENDING: frozenset({LeadState.OUTREACH_READY, LeadState.SUPPRESSED}),
     LeadState.OUTREACH_READY: frozenset({LeadState.CONTACTED, LeadState.SUPPRESSED}),
-    LeadState.CONTACTED: frozenset({LeadState.REPLIED, LeadState.SUPPRESSED}),
-    LeadState.REPLIED: frozenset({LeadState.MEETING, LeadState.SUPPRESSED}),
-    LeadState.MEETING: frozenset({LeadState.PROPOSAL, LeadState.SUPPRESSED}),
+    LeadState.CONTACTED: frozenset({LeadState.REPLIED, LeadState.LOST, LeadState.SUPPRESSED}),
+    LeadState.REPLIED: frozenset({LeadState.MEETING, LeadState.LOST, LeadState.SUPPRESSED}),
+    LeadState.MEETING: frozenset({LeadState.PROPOSAL, LeadState.LOST, LeadState.SUPPRESSED}),
     LeadState.PROPOSAL: frozenset({LeadState.WON, LeadState.LOST}),
 }
 

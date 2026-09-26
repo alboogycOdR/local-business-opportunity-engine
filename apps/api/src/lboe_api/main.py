@@ -20,6 +20,7 @@ from lboe_domain import (
     DiscoveryRequest,
     DiscoveryValidationError,
     InvalidTransition,
+    LeadResponseLogRequest,
     LeadState,
     ManualOutreachLogRequest,
     OpportunityScoreRequest,
@@ -63,6 +64,7 @@ from .db import (
     GeneratedDemoClaim,
     GeneratedDemoSection,
     Job,
+    LeadCrmEvent,
     OpportunityComponent,
     OpportunityHold,
     OpportunityScore,
@@ -1645,6 +1647,156 @@ def get_outreach_log(log_id: uuid.UUID, session: Session = Depends(db_session)) 
     if record is None:
         raise HTTPException(status_code=404, detail="outreach_log_not_found")
     return outreach_log_dict(record)
+
+
+def crm_event_dict(event: LeadCrmEvent) -> dict[str, Any]:
+    return {
+        "id": str(event.id),
+        "business_id": str(event.business_id),
+        "outreach_execution_record_id": str(event.outreach_execution_record_id)
+        if event.outreach_execution_record_id
+        else None,
+        "event_type": event.event_type,
+        "channel": event.channel,
+        "operator": event.operator,
+        "occurred_at": event.occurred_at,
+        "summary": event.summary,
+        "notes": event.notes,
+        "next_step": event.next_step,
+        "evidence": event.evidence,
+        "resulting_business_state": event.resulting_business_state,
+        "created_at": event.created_at,
+    }
+
+
+@app.post("/v1/businesses/{business_id}/crm-event")
+def create_crm_event(
+    business_id: uuid.UUID,
+    request: LeadResponseLogRequest,
+    session: Session = Depends(db_session),
+) -> dict[str, Any]:
+    business = session.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    execution = None
+    if request.outreach_execution_record_id:
+        execution = session.get(OutreachExecutionRecord, request.outreach_execution_record_id)
+        if execution is None or execution.business_id != business_id:
+            return {
+                "status": "not_crm_event_eligible",
+                "reason": "execution_record_not_found",
+                "business_id": str(business_id),
+            }
+    key = (
+        f"LOG_CRM_EVENT:{business_id}:{request.event_type}:{request.occurred_at.isoformat()}"
+        f":{request.idempotency_key or 'default'}"
+    )
+    existing = session.scalar(select(Job).where(Job.idempotency_key == key))
+    if existing and existing.payload.get("crm_event_id"):
+        event = session.get(LeadCrmEvent, uuid.UUID(str(existing.payload["crm_event_id"])))
+        if event:
+            return crm_event_dict(event)
+    substantive = {"reply_received", "meeting_scheduled", "proposal_sent", "won", "lost"}
+    if request.event_type in substantive and not request.summary.strip():
+        return {"status": "not_crm_event_eligible", "reason": "summary_required", "business_id": str(business_id)}
+    current = LeadState(business.state)
+    target: LeadState | None = None
+    required_states = {
+        "reply_received": LeadState.CONTACTED,
+        "meeting_scheduled": LeadState.REPLIED,
+        "proposal_sent": LeadState.MEETING,
+        "won": LeadState.PROPOSAL,
+    }
+    if request.event_type in required_states:
+        if current != required_states[request.event_type]:
+            return {
+                "status": "not_crm_event_eligible",
+                "reason": "invalid_lifecycle_transition",
+                "business_id": str(business_id),
+                "current_state": current.value,
+            }
+        target = {
+            "reply_received": LeadState.REPLIED,
+            "meeting_scheduled": LeadState.MEETING,
+            "proposal_sent": LeadState.PROPOSAL,
+            "won": LeadState.WON,
+        }[request.event_type]
+    elif request.event_type == "lost":
+        if current not in {LeadState.CONTACTED, LeadState.REPLIED, LeadState.MEETING, LeadState.PROPOSAL}:
+            return {"status": "not_crm_event_eligible", "reason": "invalid_lost_state", "business_id": str(business_id)}
+        target = LeadState.LOST
+    elif request.event_type == "no_response_note":
+        if current != LeadState.CONTACTED:
+            return {
+                "status": "not_crm_event_eligible",
+                "reason": "no_response_requires_contacted",
+                "business_id": str(business_id),
+            }
+    elif request.event_type == "manual_note":
+        if current not in {LeadState.CONTACTED, LeadState.REPLIED, LeadState.MEETING, LeadState.PROPOSAL}:
+            return {
+                "status": "not_crm_event_eligible",
+                "reason": "manual_note_state_not_supported",
+                "business_id": str(business_id),
+            }
+    if target is not None:
+        try:
+            validate_transition(current, target)
+        except InvalidTransition as exc:
+            raise HTTPException(status_code=409, detail={"error": "invalid_transition", "message": str(exc)}) from exc
+    job = Job(
+        job_type="LOG_CRM_EVENT", idempotency_key=key, status="running", payload={"business_id": str(business_id)}
+    )
+    session.add(job)
+    session.commit()
+    event = LeadCrmEvent(
+        business_id=business_id,
+        outreach_execution_record_id=execution.id if execution else None,
+        event_type=request.event_type,
+        channel=request.channel,
+        operator=request.operator,
+        occurred_at=request.occurred_at,
+        summary=request.summary,
+        notes=request.notes,
+        next_step=request.next_step,
+        evidence={**request.evidence, "operator_entered": True, "external_sync_performed": False},
+        resulting_business_state=(target or current).value,
+    )
+    session.add(event)
+    session.flush()
+    if target is not None:
+        business.state = target.value
+        session.add(
+            PipelineEvent(
+                business_id=business_id,
+                from_state=current.value,
+                to_state=target.value,
+                actor=request.operator,
+                reason=f"operator-recorded CRM event: {request.event_type}",
+            )
+        )
+    job.status = "succeeded"
+    job.payload = {"business_id": str(business_id), "crm_event_id": str(event.id), "external_sync_performed": False}
+    session.commit()
+    return crm_event_dict(event)
+
+
+@app.get("/v1/businesses/{business_id}/crm-events")
+def list_crm_events(business_id: uuid.UUID, session: Session = Depends(db_session)) -> list[dict[str, Any]]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    events = session.scalars(
+        select(LeadCrmEvent).where(LeadCrmEvent.business_id == business_id).order_by(LeadCrmEvent.created_at)
+    ).all()
+    return [crm_event_dict(event) for event in events]
+
+
+@app.get("/v1/crm-events/{event_id}")
+def get_crm_event(event_id: uuid.UUID, session: Session = Depends(db_session)) -> dict[str, Any]:
+    event = session.get(LeadCrmEvent, event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="crm_event_not_found")
+    return crm_event_dict(event)
 
 
 @app.get("/v1/campaigns/{campaign_id}/discovery-candidates")

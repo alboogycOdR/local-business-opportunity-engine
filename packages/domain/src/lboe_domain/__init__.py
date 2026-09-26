@@ -19,6 +19,7 @@ from .brief import (
     BusinessBriefRisk,
     BusinessBriefSection,
 )
+from .crm import LeadCrmEvent, LeadCrmOutcome, LeadNextStep, LeadResponseLogRequest, LeadResponseLogResult
 from .demo import DemoArtifact, DemoClaim, DemoGenerationRequest, DemoQaResult, DemoSection, GeneratedDemo
 from .discovery import (
     CandidateBusiness,
@@ -123,6 +124,11 @@ __all__ = [
     "ManualOutreachLogResult",
     "OutreachExecutionEvidence",
     "OutreachExecutionRecord",
+    "LeadCrmEvent",
+    "LeadCrmOutcome",
+    "LeadNextStep",
+    "LeadResponseLogRequest",
+    "LeadResponseLogResult",
     "WebsiteResolutionResult",
     "transition",
     "validate_transition",
