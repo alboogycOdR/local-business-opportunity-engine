@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lboe_api.db import (
+    AuditArtifact,
     Business,
     BusinessBrief,
     DemoArtifact,
@@ -232,8 +233,31 @@ def business_detail(business_id: uuid.UUID, db: Session = Depends(session)) -> H
     comment_html = (
         "".join(f"<li>{esc(comment.body)} · {esc(comment.created_at)}</li>" for comment in comments) or "<li>None</li>"
     )
-    body = f"<p class='badge'>{esc(business.state)}</p><section><h2>Identity</h2><p>{esc(business.display_name)} · {esc(business.category)} · {esc(business.locality)}<br>{esc(business.address_text)}</p></section><section><h2>Score / brief</h2><p>Score: {score.score if score else '—'} ({esc(score.band if score else '')})<br>Recommended action: {esc(brief.recommended_next_action if brief else '—')}</p></section><section><h2>Demo / outreach</h2><p>{esc(package.status if package else 'No outreach draft')}</p><ul>{demo_html}</ul></section><section><h2>CRM events</h2><ul>{event_html}</ul></section><section><h2>Assignments</h2><ul>{''.join(f'<li>{a.operator_id} · {a.status}</li>' for a in assignments) or '<li>None</li>'}</ul></section><section><h2>Operator notes</h2><ul>{comment_html}</ul><form method='post' action='/ui/businesses/{business_id}/comment'><textarea name='body' required placeholder='Append an operator note'></textarea><button>Add note</button></form></section><section><h2>Safe actions</h2><p>All workflow actions remain subject to backend lifecycle and suppression gates.</p><form method='post' action='/ui/businesses/{business_id}/suppress'><input name='reason' required placeholder='Suppression reason'><button>Suppress business</button></form></section>"
+    operators = db.scalars(select(Operator).where(Operator.active.is_(True))).all()
+    operator_options = "".join(f"<option value='{op.id}'>{esc(op.display_name)}</option>" for op in operators)
+    body = f"<p class='badge'>{esc(business.state)}</p><section><h2>Identity</h2><p>{esc(business.display_name)} · {esc(business.category)} · {esc(business.locality)}<br>{esc(business.address_text)}</p></section><section><h2>Score / brief</h2><p>Score: {score.score if score else '—'} ({esc(score.band if score else '')})<br>Recommended action: {esc(brief.recommended_next_action if brief else '—')}</p></section><section><h2>Demo / outreach</h2><p>{esc(package.status if package else 'No outreach draft')}</p><ul>{demo_html}</ul></section><section><h2>CRM events</h2><ul>{event_html}</ul></section><section><h2>Assignments</h2><ul>{''.join(f'<li>{a.operator_id} · {a.status}</li>' for a in assignments) or '<li>None</li>'}</ul><form method='post' action='/ui/businesses/{business_id}/assign'><select name='operator_id'>{operator_options}</select><button>Assign</button></form></section><section><h2>Operator notes</h2><ul>{comment_html}</ul><form method='post' action='/ui/businesses/{business_id}/comment'><textarea name='body' required placeholder='Append an operator note'></textarea><button>Add note</button></form></section><section><h2>Safe actions</h2><p>All workflow actions remain subject to backend lifecycle and suppression gates.</p><form method='post' action='/ui/businesses/{business_id}/suppress'><input name='reason' required placeholder='Suppression reason'><button>Suppress business</button></form></section>"
     return page(business.display_name, body)
+
+
+@router.post("/ui/businesses/{business_id}/assign")
+def assign_business(
+    business_id: uuid.UUID, operator_id: uuid.UUID = Form(...), db: Session = Depends(session)
+) -> RedirectResponse:
+    if db.get(Business, business_id) is None or db.get(Operator, operator_id) is None:
+        raise HTTPException(404, "business_or_operator_not_found")
+    db.add(OperatorAssignment(business_id=business_id, operator_id=operator_id, status="assigned"))
+    db.add(
+        OperatorAuditEvent(
+            operator_id=operator_id,
+            business_id=business_id,
+            entity_type="assignment",
+            entity_id=business_id,
+            action="assigned",
+            after_data={"operator_id": str(operator_id)},
+        )
+    )
+    db.commit()
+    return RedirectResponse(f"/ui/businesses/{business_id}", status_code=303)
 
 
 @router.post("/ui/businesses/{business_id}/comment")
@@ -359,6 +383,41 @@ def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLRespons
     return page(title, "<ul>" + "".join(rows) + "</ul>")
 
 
+@router.post("/ui/bulk", response_class=HTMLResponse)
+def bulk_action(
+    action: str = Form(...),
+    business_ids: list[str] = Form(default=[]),
+    confirm: bool = Form(False),
+    db: Session = Depends(session),
+) -> HTMLResponse:
+    allowed = {"score", "brief", "demo", "suppress"}
+    if action not in allowed:
+        raise HTTPException(422, "unsupported_bulk_action")
+    ids = [uuid.UUID(value) for value in business_ids]
+    businesses: list[Business] = []
+    for value in ids:
+        business = db.get(Business, value)
+        if business is not None:
+            businesses.append(business)
+    blocked = []
+    eligible = []
+    for business in businesses:
+        if action == "suppress" or business.state not in {"SUPPRESSED", "ARCHIVED"}:
+            eligible.append(business)
+        else:
+            blocked.append(f"{business.display_name}: suppressed/archive state")
+    if confirm and action == "suppress":
+        for business in eligible:
+            business.state = "SUPPRESSED"
+            db.add(SuppressionEntry(business_id=business.id, reason="Bulk operator suppression"))
+        db.commit()
+    mode = "executed" if confirm and action == "suppress" else "dry-run"
+    return page(
+        "Bulk action result",
+        f"<p>{esc(mode)} · action={esc(action)}</p><p>Eligible: {len(eligible)} · blocked: {len(blocked)}</p><ul>{''.join(f'<li>{esc(item)}</li>' for item in blocked) or '<li>No blocked items</li>'}</ul><p>Score, brief, and demo bulk actions require per-item backend calls; approval, readiness, contact logging, and CRM actions are never bulk-enabled.</p>",
+    )
+
+
 @router.get("/ui/operators", response_class=HTMLResponse)
 def operators(db: Session = Depends(session)) -> HTMLResponse:
     rows = "".join(
@@ -444,6 +503,25 @@ def internal_preview(demo_id: uuid.UUID, db: Session = Depends(session)) -> HTML
     if DISCLAIMER not in content:
         content = f"<div class='safety'>{DISCLAIMER}</div>" + content
     return HTMLResponse(content)
+
+
+@router.get("/ui/artifacts/demo/{demo_id}/index", response_class=HTMLResponse)
+def demo_artifact_preview(demo_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+    return internal_preview(demo_id, db)
+
+
+@router.get("/ui/artifacts/audit/{artifact_id}")
+def audit_artifact(artifact_id: uuid.UUID, db: Session = Depends(session)) -> Response:
+    artifact = db.get(AuditArtifact, artifact_id)
+    if artifact is None:
+        raise HTTPException(404, "audit_artifact_not_found")
+    root = Path(settings.audit_artifact_root).resolve()
+    path = Path(artifact.path).resolve()
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(404, "audit_artifact_unavailable")
+    if artifact.mime_type.startswith("image/"):
+        return Response(path.read_bytes(), media_type=artifact.mime_type)
+    return HTMLResponse(path.read_text(encoding="utf-8"))
 
 
 @router.get("/ui/demos/{demo_id}/preview-links", response_class=HTMLResponse)
