@@ -480,6 +480,77 @@ class LeadCrmEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class Operator(Base):
+    __tablename__ = "operators"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    display_name: Mapped[str] = mapped_column(String(200))
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    role: Mapped[str] = mapped_column(String(30), default="operator")
+    active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OperatorAssignment(Base):
+    __tablename__ = "operator_assignments"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    operator_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("operators.id"), index=True)
+    assigned_by_operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="assigned")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OperatorComment(Base):
+    __tablename__ = "operator_comments"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    operator_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("operators.id"), index=True)
+    comment_type: Mapped[str] = mapped_column(String(30), default="general")
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OperatorAuditEvent(Base):
+    __tablename__ = "operator_audit_events"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+    business_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("businesses.id"), nullable=True, index=True)
+    entity_type: Mapped[str] = mapped_column(String(80))
+    entity_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    action: Mapped[str] = mapped_column(String(100))
+    before_data: Mapped[dict[str, Any] | None] = mapped_column(JsonType, nullable=True)
+    after_data: Mapped[dict[str, Any] | None] = mapped_column(JsonType, nullable=True)
+    event_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JsonType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DemoPreviewLink(Base):
+    __tablename__ = "demo_preview_links"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    demo_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("generated_demos.id"), index=True)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True)
+    label: Mapped[str] = mapped_column(String(200), default="Concept preview")
+    permission: Mapped[str] = mapped_column(String(30), default="external_view")
+    status: Mapped[str] = mapped_column(String(30), default="active")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by_operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DemoPreviewAccessEvent(Base):
+    __tablename__ = "demo_preview_access_events"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    preview_link_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("demo_preview_links.id"), index=True)
+    accessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    ip_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    user_agent_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    outcome: Mapped[str] = mapped_column(String(40))
+    event_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JsonType, default=dict)
+
+
 def make_engine(database_url: str) -> Any:
     kwargs: dict[str, Any] = {"pool_pre_ping": True, "future": True}
     if database_url.startswith("sqlite"):

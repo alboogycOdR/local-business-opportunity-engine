@@ -12,6 +12,7 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.staticfiles import StaticFiles
 from lboe_domain import (
     ALLOWED_TRANSITIONS,
     AuditRequest,
@@ -141,6 +142,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Local Business Opportunity Engine", version="0.1.0", lifespan=lifespan)
+app.mount("/ui/static", StaticFiles(directory="apps/api/src/lboe_api/static"), name="ui-static")
 
 
 class CampaignCreate(BaseModel):
@@ -2000,3 +2002,8 @@ def list_suppressions(business_id: uuid.UUID, session: Session = Depends(db_sess
         {"id": str(item.id), "reason": item.reason, "channel": item.channel, "created_at": item.created_at}
         for item in session.scalars(select(SuppressionEntry).where(SuppressionEntry.business_id == business_id)).all()
     ]
+
+
+from .ui.routes import router as ui_router  # noqa: E402
+
+app.include_router(ui_router)  # type: ignore[has-type]
