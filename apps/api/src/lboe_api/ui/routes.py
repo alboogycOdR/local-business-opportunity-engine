@@ -579,8 +579,11 @@ def external_preview(token: str, request: Request, db: Session = Depends(session
     if link is None:
         raise HTTPException(404, "preview_not_found")
     now = datetime.now(UTC)
-    if link.status != "active" or (link.expires_at and link.expires_at < now):
-        if link.status == "active" and link.expires_at and link.expires_at < now:
+    expires_at = link.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    if link.status != "active" or (expires_at and expires_at < now):
+        if link.status == "active" and expires_at and expires_at < now:
             link.status = "expired"
             db.commit()
         raise HTTPException(410, "preview_expired_or_revoked")

@@ -136,3 +136,8 @@ Pilot reports are available at `GET /v1/reports/pilot` and
 [`docs/PILOT_RUNBOOK.md`](./docs/PILOT_RUNBOOK.md),
 [`docs/API_EXAMPLES.md`](./docs/API_EXAMPLES.md), and
 [`docs/LIMITATIONS.md`](./docs/LIMITATIONS.md) for operational details.
+
+The local Operator UI is available at `/ui` when the API is running. It
+provides campaign queues, lead detail, review/readiness visibility, operator
+notes, safe artifact previews, and controlled expiring concept-preview links.
+It never sends outreach or exposes production hosting.
