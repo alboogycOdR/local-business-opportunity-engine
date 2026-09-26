@@ -2,7 +2,7 @@
 
 A controlled, measurable system for discovering local businesses, auditing their digital presence, scoring addressable opportunities, generating truthful demo experiences, and supporting human-approved sales workflows.
 
-> **Status:** Sprint 2 discovery foundation implemented. External providers remain disabled by default.
+> **Status:** Sprint 13 pilot-readiness hardening implemented. External providers and sending remain disabled by default.
 
 ## Product thesis
 
@@ -69,9 +69,12 @@ Their code, licenses, source terms, and external platform policies must be revie
 
 ## Current build boundary
 
-The repository bootstrap defines the architecture. **Sprint 1** establishes the monorepo, FastAPI core, PostgreSQL, Redis, migrations, campaign/business/provenance models, lead state machine, manual lead import, tests, lint/type checking, and developer documentation.
-
-Sprint 2 adds a provider-neutral discovery adapter and conservative normalization/dedupe. Maps scraping remains disabled by default and is never permission for outreach. Places enrichment, browser auditing, scoring execution, AI demo generation, automated outreach, and production deployment remain out of scope.
+Sprints 1–12 establish the API, migrations, discovery/audit/scoring/brief/demo
+pipeline, human review, consent-aware draft/readiness controls, manual CRM
+events, and pilot reporting. Sprint 13 hardens clean setup and repeatable local
+pilot operations. Maps scraping remains disabled by default and is never
+permission for outreach; external sending and public deployment remain out of
+scope.
 
 ## Local bootstrap target
 
@@ -85,12 +88,12 @@ pip install -e .
 pytest
 ```
 
-Start dependencies with `docker compose up -d postgres redis`, then run the API with
-`uvicorn lboe_api.main:app --reload`. Copy `.env.example` to `.env` only when you
-need local overrides. Apply `infrastructure/database/migrations/0001_initial.sql`
-to PostgreSQL with `psql`; the API also creates the same tables on startup for a
-fresh local/test database. Readiness requires both PostgreSQL and Redis; health is
-process-only.
+Start dependencies with `docker compose up -d postgres redis`, apply all ordered
+migrations with `python scripts/migrate.py --database-url $env:LBOE_DATABASE_URL`,
+then run the API with `uvicorn lboe_api.main:app --reload`. Copy `.env.example`
+to `.env` only when you need local overrides. The API's `create_all` fallback is
+disabled by default and intended only for tests/local bootstrap. Readiness
+requires both PostgreSQL and Redis; health is process-only.
 
 Manual import uses `POST /v1/campaigns/{campaign_id}/import` with either
 `{"format":"json","records":[...]}` or `{"format":"csv","csv_text":"..."}`.
@@ -110,3 +113,26 @@ Codex may refine this as long as the resulting workflow is documented and consis
 ## Security
 
 Never commit credentials, API keys, scraped datasets, prospect exports, generated private demos, or local `.env` files.
+
+## Local pilot quickstart
+
+LBOE supports a repeatable 10–50 lead pilot. It discovers/imports businesses,
+audits objective website signals, calculates explainable scores, creates
+evidence-backed briefs and concept previews, and records human review and CRM
+events. It does **not** send email/WhatsApp/SMS, sync inboxes or CRMs, host
+public demos, or determine legal consent.
+
+```powershell
+docker compose up -d postgres redis
+Copy-Item .env.example .env
+python scripts/migrate.py --database-url $env:DATABASE_URL
+python scripts/seed_pilot.py --database-url $env:DATABASE_URL
+uvicorn lboe_api.main:app --reload
+python scripts/smoke_pilot_flow.py
+```
+
+Pilot reports are available at `GET /v1/reports/pilot` and
+`GET /v1/campaigns/{campaign_id}/reports/pilot`. See
+[`docs/PILOT_RUNBOOK.md`](./docs/PILOT_RUNBOOK.md),
+[`docs/API_EXAMPLES.md`](./docs/API_EXAMPLES.md), and
+[`docs/LIMITATIONS.md`](./docs/LIMITATIONS.md) for operational details.

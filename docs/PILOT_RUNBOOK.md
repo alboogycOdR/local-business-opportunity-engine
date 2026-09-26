@@ -1,132 +1,101 @@
-# Pilot Runbook — First 20–50 Businesses
+# LBOE Pilot Runbook
 
-## Objective
+This runbook is for a local, synthetic or operator-controlled 10–50 lead
+pilot. No command in this runbook sends an external message.
 
-Test whether the system can reliably identify actionable digital gaps, generate trustworthy demos, and produce enough operator/business interest to justify further automation.
+## Prerequisites
 
-## Before the pilot
+- Windows PowerShell 7 or a Unix shell
+- Docker Desktop
+- Python 3.12 and the project virtual environment
+- PostgreSQL and Redis available through Docker Compose
 
-- Choose one vertical.
-- Choose one geography.
-- Confirm the campaign's source and outreach policy.
-- Configure one demo template.
-- Set score threshold to 70 initially.
-- Disable automatic sending.
-- Set a hard daily demo-generation cap.
+Copy `.env.example` to `.env` and keep secrets out of the repository.
 
-## Step 1 — Discover/import
+## Start and migrate
 
-Target 50–100 raw candidates so that 20–50 can survive qualification.
+```powershell
+docker compose up -d postgres redis
+$env:LBOE_DATABASE_URL = "postgresql+psycopg://lboe:lboe_dev_only@localhost:5432/lboe"
+python scripts/migrate.py --database-url $env:LBOE_DATABASE_URL
+```
 
-Record:
+The migration runner applies the numbered files once and records them in
+`schema_migrations`. It is safe to rerun.
 
-- source
-- source identifier/URL
-- observed date
-- name/category/locality
-- any source storage limitations
+## Validate and seed
 
-## Step 2 — Deduplicate
+```powershell
+pytest
+python scripts/verify_bootstrap.py
+python scripts/seed_pilot.py --database-url $env:LBOE_DATABASE_URL
+```
 
-Review ambiguous matches manually.
+The seed creates only synthetic records marked with policy seed key
+`sprint13-pilot`. To reset only those records:
 
-Do not merge automatically when:
+```powershell
+python scripts/seed_pilot.py --database-url $env:LBOE_DATABASE_URL --reset-synthetic
+```
 
-- similar names have different addresses
-- chains have multiple branches
-- a business has moved
-- category and contact details conflict
+## Run API and smoke flow
 
-## Step 3 — Cheap qualification
+In a second PowerShell window:
 
-Reject/hold:
+```powershell
+$env:LBOE_DATABASE_URL = "postgresql+psycopg://lboe:lboe_dev_only@localhost:5432/lboe"
+uvicorn lboe_api.main:app --reload
+```
 
-- clearly closed businesses
-- irrelevant category
-- duplicates
-- no reliable identity
-- policy conflicts
+Then:
 
-Do not reject merely because a website exists.
+```powershell
+python scripts/smoke_pilot_flow.py --base-url http://127.0.0.1:8000
+Invoke-RestMethod http://127.0.0.1:8000/v1/reports/pilot
+```
 
-## Step 4 — Audit
+The smoke output includes campaign, business, demo, draft, manual-log and CRM
+event IDs. It records a synthetic manual execution only; the response must
+show `delivery_performed_by_system: false` and report `system_delivery_count`
+as zero.
 
-For every qualified business:
+## Inspect artifacts and states
 
-- resolve website
-- capture desktop/mobile screenshot
-- measure website health
-- identify booking/WhatsApp/call/form paths
-- store structured findings
+Audit artifacts are under `artifacts/audits`; concept demos are under
+`artifacts/demos/{demo_id}`. These paths are local and ignored by Git. A normal
+happy path ends in `MEETING` after operator-entered reply and meeting events.
+`CONTACTED` means an operator logged contact, not that LBOE sent anything.
 
-## Step 5 — Score
+## Troubleshooting
 
-Calculate `opportunity-v1` and review:
+- `connection refused`: run `docker compose ps` and wait for the Postgres
+  health check.
+- `relation does not exist`: rerun `python scripts/migrate.py` against the
+  same database URL.
+- API readiness is `503`: verify Redis is running; `/health` is process-only.
+- stale synthetic rows: use `--reset-synthetic`, never broad database deletion.
+- missing demo artifacts: check `LBOE_DEMO_ARTIFACT_ROOT` and filesystem
+  permissions.
+- maps/audit provider errors: keep provider flags disabled for the synthetic
+  pilot; the seed and smoke scripts require no external services.
 
-- total
-- components
-- holds
-- data confidence
+## Operator pilot checklist
 
-Manually inspect the top 10 to validate whether scoring feels sensible before generating all demos.
+For a real 10–50 lead pilot, choose one vertical and geography, confirm the
+campaign source/outreach policy, configure one template, keep automatic sending
+disabled, and set a daily demo cap. Record source, identifier, observed date,
+identity fields, and storage limitations for each candidate. Review ambiguous
+matches manually; do not merge conflicting names, addresses, branches, or
+categories automatically.
 
-## Step 6 — Enrich selected leads
+Audit qualified businesses before scoring. Review score components and holds on
+the top leads before generating demos. Generate a small batch first, pass QA,
+and record human review outcomes. Offers must use configured campaign pricing,
+not score-derived prices. Every message remains human-approved and every
+outcome should be recorded as an explicit CRM event.
 
-For high-score leads, retrieve only the facts needed to build a truthful demo. Prefer business-owned sources.
-
-## Step 7 — Generate demos
-
-Generate 10–20 demos first, not all leads.
-
-Pass automated QA, then human review.
-
-Record review outcome:
-
-- approved first pass
-- approved after regeneration
-- rejected due to weak evidence
-- rejected due to design
-- rejected due to incorrect facts
-
-## Step 8 — Create offers
-
-Map the top detected gaps to capability packages.
-
-Do not invent pricing based on the score. Use campaign pricing configuration.
-
-## Step 9 — Outreach
-
-Apply jurisdiction/channel policy, consent status and suppression checks. Human approves every message in the pilot.
-
-## Step 10 — Record outcomes
-
-At minimum:
-
-- sent/contacted
-- reply
-- interested/not interested
-- meeting
-- proposal
-- won/lost
-- reason lost
-
-## Pilot review questions
-
-1. Did high-score leads look meaningfully better than medium-score leads?
-2. Which individual score components correlated with replies/meetings?
-3. Which demos required regeneration and why?
-4. Which vertical template sections were most persuasive/useful?
-5. Which data sources caused factual or policy problems?
-6. What was the operator time per approved demo?
-7. What was the processing cost per approved demo?
-8. Which offer package was easiest to explain?
-
-## Exit criteria
-
-Only scale discovery/generation after the pilot demonstrates:
-
-- acceptable factual accuracy
-- manageable compliance process
-- reasonable cost per approved demo
-- a repeatable operator workflow
-- some measurable commercial signal
+Pilot review questions include: which score components correlate with replies or
+meetings, which demos need regeneration, which sources cause factual/policy
+issues, operator time per approved demo, processing cost, and which offer is
+easiest to explain. Scale only after factual accuracy, compliance handling,
+cost, and operator workflow are repeatable.
