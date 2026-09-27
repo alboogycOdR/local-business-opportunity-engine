@@ -16,3 +16,7 @@
 - Manual outreach and CRM events are trusted as operator-entered assertions.
 - Pilot reports compute live from operational tables; they are not historical
   snapshots and current state counts differ from transition-event counts.
+Pilot exports and artifacts use local filesystem storage. There is no public
+hosting, automated sending, inbox/CRM sync, legal compliance determination, or
+operator web authentication. Manual assertions are trusted as operator-entered
+facts and templates are deterministic.

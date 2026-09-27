@@ -145,3 +145,46 @@ def test_controlled_preview_token_lifecycle(tmp_path: Path) -> None:
             assert client.get(f"/preview/{token}").status_code == 410
         finally:
             settings.demo_artifact_root = old_root
+
+
+def test_pilot_console_config_readiness_and_retrospective() -> None:
+    with TestClient(app) as client:
+        campaign = client.post(
+            "/v1/campaigns", json={"name": "V5 Pilot", "vertical": "salon", "geography": "Cape Town"}
+        ).json()
+        client.post(
+            f"/v1/campaigns/{campaign['id']}/import",
+            json={"format": "json", "records": [{"display_name": "V5 Salon", "category": "salon"}]},
+        )
+        response = client.post(
+            "/ui/pilots",
+            data={
+                "name": "V5 Console",
+                "campaign_id": campaign["id"],
+                "mode": "dry_run",
+                "target_lead_count": "10",
+                "max_businesses": "50",
+                "daily_demo_cap": "10",
+                "daily_preview_link_cap": "10",
+                "daily_manual_contact_cap": "5",
+                "daily_readiness_approval_cap": "5",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        pilot_id = response.headers["location"].rsplit("/", 1)[-1]
+        assert client.get(f"/ui/pilots/{pilot_id}").status_code == 200
+        assert "DRY RUN MODE" in client.get(f"/ui/pilots/{pilot_id}").text
+        assert client.get(f"/ui/pilots/{pilot_id}/readiness").status_code == 200
+        ack = client.post(
+            f"/ui/pilots/{pilot_id}/acknowledge-source-policy",
+            data={"acknowledgement_text": "I acknowledge the source policy."},
+            follow_redirects=False,
+        )
+        assert ack.status_code == 303
+        assert (
+            client.post(
+                f"/ui/pilots/{pilot_id}/retrospective", data={"what_worked": "clear queues"}, follow_redirects=False
+            ).status_code
+            == 303
+        )

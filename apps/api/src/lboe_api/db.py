@@ -34,6 +34,72 @@ class Campaign(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class PilotRun(Base):
+    __tablename__ = "pilot_runs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    campaign_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("campaigns.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    vertical: Mapped[str] = mapped_column(String(100))
+    geography: Mapped[str] = mapped_column(String(200))
+    target_lead_count: Mapped[int] = mapped_column()
+    mode: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    source_policy_version: Mapped[str] = mapped_column(String(80))
+    default_preview_expiry_days: Mapped[int] = mapped_column()
+    max_businesses: Mapped[int] = mapped_column()
+    daily_demo_cap: Mapped[int] = mapped_column()
+    daily_preview_link_cap: Mapped[int] = mapped_column()
+    daily_manual_contact_cap: Mapped[int] = mapped_column()
+    daily_readiness_approval_cap: Mapped[int] = mapped_column()
+    created_by_operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PilotSourcePolicyAcknowledgement(Base):
+    __tablename__ = "pilot_source_policy_acknowledgements"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    pilot_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("pilot_runs.id"), index=True)
+    operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+    policy_version: Mapped[str] = mapped_column(String(80))
+    acknowledged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    acknowledgement_text: Mapped[str] = mapped_column(Text)
+
+
+class PilotRetrospective(Base):
+    __tablename__ = "pilot_retrospectives"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    pilot_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("pilot_runs.id"), index=True)
+    created_by_operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+    what_worked: Mapped[str] = mapped_column(Text, default="")
+    what_failed: Mapped[str] = mapped_column(Text, default="")
+    false_positives: Mapped[str] = mapped_column(Text, default="")
+    false_negatives: Mapped[str] = mapped_column(Text, default="")
+    operator_friction: Mapped[str] = mapped_column(Text, default="")
+    demo_quality_issues: Mapped[str] = mapped_column(Text, default="")
+    source_quality_issues: Mapped[str] = mapped_column(Text, default="")
+    business_objections: Mapped[str] = mapped_column(Text, default="")
+    reply_quality: Mapped[str] = mapped_column(Text, default="")
+    meeting_quality: Mapped[str] = mapped_column(Text, default="")
+    next_sprint_recommendation: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PilotExportRun(Base):
+    __tablename__ = "pilot_export_runs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    pilot_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("pilot_runs.id"), index=True)
+    status: Mapped[str] = mapped_column(String(30))
+    export_root: Mapped[str] = mapped_column(Text)
+    files: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    warnings: Mapped[list[Any]] = mapped_column(JsonType, default=list)
+    created_by_operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Business(Base):
     __tablename__ = "businesses"
     __table_args__ = (UniqueConstraint("campaign_id", "identity_key", name="uq_business_campaign_identity"),)

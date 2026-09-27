@@ -12,6 +12,11 @@ FastAPI workflow. It does not replace API validation or lifecycle guards.
 - `/ui/reports/pilot` — global and campaign reports
 - `/ui/operators` and `/ui/my-queue` — trusted local operator workspace
 - `/ui/demos/{id}/preview` — controlled internal artifact preview
+- `/ui/pilots` — pilot configuration, readiness, caps, exports, and retrospective
+
+Pilot pages show dry-run versus active mode, require source-policy acknowledgement
+before readiness, and keep exports local under `LBOE_EXPORT_ROOT`. Dry-run is an
+operator UI guardrail; the underlying JSON logging APIs remain unchanged.
 
 The UI always shows that system delivery is disabled. Manual outreach remains
 an operator assertion and `system_delivery_count` remains zero.

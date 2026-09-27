@@ -141,3 +141,9 @@ The local Operator UI is available at `/ui` when the API is running. It
 provides campaign queues, lead detail, review/readiness visibility, operator
 notes, safe artifact previews, and controlled expiring concept-preview links.
 It never sends outreach or exposes production hosting.
+
+Sprint 14 v5 adds a pilot operations console at `/ui/pilots`: configure a
+10–50 lead pilot, run readiness checks, acknowledge source policy, monitor
+caps, generate a sanitized local export pack, and capture a retrospective.
+Dry-run mode is prominent and no automated sending, inbox sync, or CRM sync is
+introduced.

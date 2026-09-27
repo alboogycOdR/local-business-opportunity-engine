@@ -18,6 +18,7 @@ from lboe_api.db import (
     AuditArtifact,
     Business,
     BusinessBrief,
+    Campaign,
     DemoArtifact,
     DemoPreviewAccessEvent,
     DemoPreviewLink,
@@ -29,9 +30,22 @@ from lboe_api.db import (
     OperatorComment,
     OpportunityScore,
     OutreachDraftPackage,
+    PilotExportRun,
+    PilotRetrospective,
+    PilotRun,
+    PilotSourcePolicyAcknowledgement,
     SuppressionEntry,
 )
 from lboe_api.main import SessionLocal, settings
+from lboe_api.pilot_service import (
+    POLICY_VERSION,
+    audit,
+    cap_available,
+    counters,
+    generate_export,
+    pilot_for_business,
+    readiness_summary,
+)
 from lboe_api.reporting_service import build_pilot_report
 
 router = APIRouter()
@@ -48,7 +62,7 @@ def esc(value: Any) -> str:
 
 def page(title: str, body: str) -> HTMLResponse:
     return HTMLResponse(
-        f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{esc(title)} · LBOE</title><link rel='stylesheet' href='/ui/static/ui.css'></head><body><header><a href='/ui'><strong>LBOE Operator Cockpit</strong></a><nav><a href='/ui/campaigns'>Campaigns</a><a href='/ui/queues'>Queues</a><a href='/ui/reports/pilot'>Reports</a><a href='/ui/operators'>Operators</a></nav></header><div class='safety'>System delivery is disabled. LBOE does not send email, WhatsApp, SMS, or CRM messages.</div><main><h1>{esc(title)}</h1>{body}</main></body></html>"""
+        f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{esc(title)} · LBOE</title><link rel='stylesheet' href='/ui/static/ui.css'></head><body><header><a href='/ui'><strong>LBOE Operator Cockpit</strong></a><nav><a href='/ui/campaigns'>Campaigns</a><a href='/ui/pilots'>Pilots</a><a href='/ui/queues'>Queues</a><a href='/ui/reports/pilot'>Reports</a><a href='/ui/operators'>Operators</a></nav></header><div class='safety'>System delivery is disabled. LBOE does not send email, WhatsApp, SMS, or CRM messages.</div><main><h1>{esc(title)}</h1>{body}</main></body></html>"""
     )
 
 
@@ -235,7 +249,14 @@ def business_detail(business_id: uuid.UUID, db: Session = Depends(session)) -> H
     )
     operators = db.scalars(select(Operator).where(Operator.active.is_(True))).all()
     operator_options = "".join(f"<option value='{op.id}'>{esc(op.display_name)}</option>" for op in operators)
-    body = f"<p class='badge'>{esc(business.state)}</p><section><h2>Identity</h2><p>{esc(business.display_name)} · {esc(business.category)} · {esc(business.locality)}<br>{esc(business.address_text)}</p></section><section><h2>Score / brief</h2><p>Score: {score.score if score else '—'} ({esc(score.band if score else '')})<br>Recommended action: {esc(brief.recommended_next_action if brief else '—')}</p></section><section><h2>Demo / outreach</h2><p>{esc(package.status if package else 'No outreach draft')}</p><ul>{demo_html}</ul></section><section><h2>CRM events</h2><ul>{event_html}</ul></section><section><h2>Assignments</h2><ul>{''.join(f'<li>{a.operator_id} · {a.status}</li>' for a in assignments) or '<li>None</li>'}</ul><form method='post' action='/ui/businesses/{business_id}/assign'><select name='operator_id'>{operator_options}</select><button>Assign</button></form></section><section><h2>Operator notes</h2><ul>{comment_html}</ul><form method='post' action='/ui/businesses/{business_id}/comment'><textarea name='body' required placeholder='Append an operator note'></textarea><button>Add note</button></form></section><section><h2>Safe actions</h2><p>All workflow actions remain subject to backend lifecycle and suppression gates.</p><form method='post' action='/ui/businesses/{business_id}/suppress'><input name='reason' required placeholder='Suppression reason'><button>Suppress business</button></form></section>"
+    pilot = pilot_for_business(db, business.id)
+    pilot_banner = ""
+    if pilot is not None:
+        pilot_banner = f"<div class='safety'>{'DRY RUN MODE — manual outreach and CRM outcome logging are blocked by the operator console.' if pilot.mode == 'dry_run' else 'ACTIVE PILOT MODE — manual records represent operator activity; LBOE still sends nothing.'} <a href='/ui/pilots/{pilot.id}'>View pilot</a></div>"
+    body = (
+        pilot_banner
+        + f"<p class='badge'>{esc(business.state)}</p><section><h2>Identity</h2><p>{esc(business.display_name)} · {esc(business.category)} · {esc(business.locality)}<br>{esc(business.address_text)}</p></section><section><h2>Score / brief</h2><p>Score: {score.score if score else '—'} ({esc(score.band if score else '')})<br>Recommended action: {esc(brief.recommended_next_action if brief else '—')}</p></section><section><h2>Demo / outreach</h2><p>{esc(package.status if package else 'No outreach draft')}</p><ul>{demo_html}</ul></section><section><h2>CRM events</h2><ul>{event_html}</ul></section><section><h2>Assignments</h2><ul>{''.join(f'<li>{a.operator_id} · {a.status}</li>' for a in assignments) or '<li>None</li>'}</ul><form method='post' action='/ui/businesses/{business_id}/assign'><select name='operator_id'>{operator_options}</select><button>Assign</button></form></section><section><h2>Operator notes</h2><ul>{comment_html}</ul><form method='post' action='/ui/businesses/{business_id}/comment'><textarea name='body' required placeholder='Append an operator note'></textarea><button>Add note</button></form></section><section><h2>Safe actions</h2><p>All workflow actions remain subject to backend lifecycle and suppression gates.</p><form method='post' action='/ui/businesses/{business_id}/suppress'><input name='reason' required placeholder='Suppression reason'><button>Suppress business</button></form></section>"
+    )
     return page(business.display_name, body)
 
 
@@ -555,6 +576,9 @@ def create_preview_link(
     business = db.get(Business, demo.business_id)
     if business is None or business.state == "SUPPRESSED":
         raise HTTPException(409, "business_suppressed")
+    pilot = pilot_for_business(db, business.id)
+    if pilot is not None and not cap_available(db, pilot, "preview_link"):
+        raise HTTPException(409, "pilot_preview_link_cap_reached")
     safe_demo_path(demo, db)
     raw = secrets.token_urlsafe(32)
     link = DemoPreviewLink(
@@ -614,3 +638,327 @@ def revoke_preview(link_id: uuid.UUID, db: Session = Depends(session)) -> Redire
     link.revoked_at = datetime.now(UTC)
     db.commit()
     return RedirectResponse(f"/ui/demos/{link.demo_id}/preview-links", status_code=303)
+
+
+def _pilot(db: Session, pilot_id: uuid.UUID) -> PilotRun:
+    item = db.get(PilotRun, pilot_id)
+    if item is None:
+        raise HTTPException(404, "pilot_not_found")
+    return item
+
+
+@router.get("/ui/pilots", response_class=HTMLResponse)
+def pilot_list(db: Session = Depends(session)) -> HTMLResponse:
+    rows = (
+        "".join(
+            f"<tr><td><a href='/ui/pilots/{p.id}'>{esc(p.name)}</a></td><td>{esc(p.mode)}</td><td>{esc(p.status)}</td><td>{esc(p.vertical)}</td></tr>"
+            for p in db.scalars(select(PilotRun).order_by(PilotRun.created_at.desc())).all()
+        )
+        or "<tr><td colspan='4'>No pilots</td></tr>"
+    )
+    return page(
+        "Pilot operations",
+        "<p><a class='button' href='/ui/pilots/new'>Create pilot</a></p><table><tr><th>Name</th><th>Mode</th><th>Status</th><th>Vertical</th></tr>"
+        + rows
+        + "</table>",
+    )
+
+
+@router.get("/ui/pilots/new", response_class=HTMLResponse)
+def pilot_new(db: Session = Depends(session)) -> HTMLResponse:
+    campaigns = db.scalars(select(Campaign).order_by(Campaign.created_at.desc())).all()
+    opts = "".join(f"<option value='{c.id}'>{esc(c.name)}</option>" for c in campaigns)
+    form = f"<form method='post' action='/ui/pilots'><label>Name <input name='name' required></label><label>Campaign <select name='campaign_id'>{opts}</select></label><label>Mode <select name='mode'><option>dry_run</option><option>active</option></select></label><label>Target <input name='target_lead_count' type='number' value='10'></label><label>Max businesses <input name='max_businesses' type='number' value='50'></label><label>Daily demo cap <input name='daily_demo_cap' type='number' value='10'></label><label>Daily preview cap <input name='daily_preview_link_cap' type='number' value='10'></label><label>Daily contact cap <input name='daily_manual_contact_cap' type='number' value='5'></label><label>Daily readiness cap <input name='daily_readiness_approval_cap' type='number' value='5'></label><button>Create</button></form>"
+    return page("Create pilot", form)
+
+
+@router.post("/ui/pilots")
+def pilot_create(
+    name: str = Form(...),
+    campaign_id: uuid.UUID = Form(...),
+    mode: str = Form("dry_run"),
+    target_lead_count: int = Form(10),
+    max_businesses: int = Form(50),
+    daily_demo_cap: int = Form(10),
+    daily_preview_link_cap: int = Form(10),
+    daily_manual_contact_cap: int = Form(5),
+    daily_readiness_approval_cap: int = Form(5),
+    db: Session = Depends(session),
+) -> RedirectResponse:
+    campaign = db.get(Campaign, campaign_id)
+    if (
+        campaign is None
+        or mode not in {"dry_run", "active"}
+        or min(
+            target_lead_count,
+            max_businesses,
+            daily_demo_cap,
+            daily_preview_link_cap,
+            daily_manual_contact_cap,
+            daily_readiness_approval_cap,
+        )
+        <= 0
+    ):
+        raise HTTPException(422, "invalid_pilot_config")
+    p = PilotRun(
+        name=name,
+        campaign_id=campaign.id,
+        vertical=campaign.vertical,
+        geography=campaign.geography or "",
+        target_lead_count=target_lead_count,
+        mode=mode,
+        status="draft",
+        source_policy_version=POLICY_VERSION,
+        default_preview_expiry_days=7,
+        max_businesses=max_businesses,
+        daily_demo_cap=daily_demo_cap,
+        daily_preview_link_cap=daily_preview_link_cap,
+        daily_manual_contact_cap=daily_manual_contact_cap,
+        daily_readiness_approval_cap=daily_readiness_approval_cap,
+    )
+    db.add(p)
+    db.flush()
+    audit(db, p, "created", None, after={"status": "draft"})
+    db.commit()
+    return RedirectResponse(f"/ui/pilots/{p.id}", status_code=303)
+
+
+@router.get("/ui/pilots/{pilot_id}", response_class=HTMLResponse)
+def pilot_detail(pilot_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+    p = _pilot(db, pilot_id)
+    c = counters(db, p)
+    banner = (
+        "DRY RUN MODE — no real outreach should be logged."
+        if p.mode == "dry_run"
+        else "ACTIVE PILOT MODE — manual outreach records represent operator activity."
+    )
+    body = f"<div class='safety'>{banner}</div><p>Status: <strong>{p.status}</strong> · Mode: <strong>{p.mode}</strong></p><div class='cards'><div class='card'>Businesses {c['businesses']} / {p.max_businesses}</div><div class='card'>Demos today {c['demos_today']} / {p.daily_demo_cap}</div><div class='card'>Preview links {c['preview_links_today']} / {p.daily_preview_link_cap}</div><div class='card'>Contacts {c['manual_contacts_today']} / {p.daily_manual_contact_cap}</div></div><p><a class='button' href='/ui/pilots/{p.id}/readiness'>Readiness</a> <a class='button' href='/ui/pilots/{p.id}/exports'>Exports</a> <a class='button' href='/ui/pilots/{p.id}/retrospective'>Retrospective</a></p>"
+    if p.status == "draft":
+        body += f"<form method='post' action='/ui/pilots/{p.id}/mark-ready'><button>Mark ready</button></form>"
+    if p.status == "ready":
+        body += f"<form method='post' action='/ui/pilots/{p.id}/activate'><button>Activate</button></form>"
+    if p.status == "active":
+        body += f"<form method='post' action='/ui/pilots/{p.id}/pause'><button>Pause</button></form>"
+    if p.status != "closed":
+        body += f"<form method='post' action='/ui/pilots/{p.id}/close'><button>Close pilot</button></form>"
+    return page(p.name, body)
+
+
+@router.post("/ui/pilots/{pilot_id}/update")
+def pilot_update(
+    pilot_id: uuid.UUID,
+    name: str = Form(...),
+    target_lead_count: int = Form(...),
+    max_businesses: int = Form(...),
+    daily_demo_cap: int = Form(...),
+    daily_preview_link_cap: int = Form(...),
+    daily_manual_contact_cap: int = Form(...),
+    daily_readiness_approval_cap: int = Form(...),
+    db: Session = Depends(session),
+) -> RedirectResponse:
+    pilot = _pilot(db, pilot_id)
+    if (
+        pilot.status == "closed"
+        or min(
+            target_lead_count,
+            max_businesses,
+            daily_demo_cap,
+            daily_preview_link_cap,
+            daily_manual_contact_cap,
+            daily_readiness_approval_cap,
+        )
+        <= 0
+    ):
+        raise HTTPException(409, "pilot_not_mutable")
+    pilot.name = name
+    pilot.target_lead_count = target_lead_count
+    pilot.max_businesses = max_businesses
+    pilot.daily_demo_cap = daily_demo_cap
+    pilot.daily_preview_link_cap = daily_preview_link_cap
+    pilot.daily_manual_contact_cap = daily_manual_contact_cap
+    pilot.daily_readiness_approval_cap = daily_readiness_approval_cap
+    pilot.updated_at = datetime.now(UTC)
+    audit(db, pilot, "updated", None, after={"name": name, "caps": True})
+    db.commit()
+    return RedirectResponse(f"/ui/pilots/{pilot.id}", status_code=303)
+
+
+@router.get("/ui/pilots/{pilot_id}/readiness", response_class=HTMLResponse)
+def pilot_readiness(pilot_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+    p = _pilot(db, pilot_id)
+    summary = readiness_summary(db, p, settings)
+    rows = "".join(
+        f"<tr><td>{esc(c['label'])}</td><td>{c['result']}</td><td>{'required' if c['required'] else 'informational'}</td></tr>"
+        for c in summary["checks"]
+    )
+    form = f"<form method='post' action='/ui/pilots/{p.id}/acknowledge-source-policy'><textarea name='acknowledgement_text' required>I acknowledge the pilot source policy and will not resell raw data or send automated messages.</textarea><button>Acknowledge source policy</button></form>"
+    return page(
+        "Pilot readiness",
+        f"<p>Ready: <strong>{summary['ready']}</strong></p><table><tr><th>Check</th><th>Result</th><th>Class</th></tr>{rows}</table>{form}",
+    )
+
+
+@router.post("/ui/pilots/{pilot_id}/acknowledge-source-policy")
+def pilot_ack(
+    pilot_id: uuid.UUID, acknowledgement_text: str = Form(...), db: Session = Depends(session)
+) -> RedirectResponse:
+    p = _pilot(db, pilot_id)
+    db.add(
+        PilotSourcePolicyAcknowledgement(
+            pilot_id=p.id, policy_version=p.source_policy_version, acknowledgement_text=acknowledgement_text
+        )
+    )
+    audit(db, p, "source_policy_acknowledged", None, after={"policy_version": p.source_policy_version})
+    db.commit()
+    return RedirectResponse(f"/ui/pilots/{p.id}/readiness", status_code=303)
+
+
+def _transition(p: PilotRun, target: str) -> None:
+    allowed = {"draft": {"ready"}, "ready": {"active"}, "active": {"paused", "closed"}, "paused": {"active", "closed"}}
+    if target not in allowed.get(p.status, set()):
+        raise HTTPException(409, "invalid_pilot_transition")
+    p.status = target
+    p.updated_at = datetime.now(UTC)
+    if target == "active":
+        p.activated_at = datetime.now(UTC)
+    if target == "closed":
+        p.closed_at = datetime.now(UTC)
+
+
+@router.post("/ui/pilots/{pilot_id}/mark-ready")
+def pilot_mark_ready(pilot_id: uuid.UUID, db: Session = Depends(session)) -> RedirectResponse:
+    p = _pilot(db, pilot_id)
+    s = readiness_summary(db, p, settings)
+    if not s["ready"]:
+        raise HTTPException(409, "pilot_readiness_failed")
+    _transition(p, "ready")
+    audit(db, p, "marked_ready", None, after={"status": p.status})
+    db.commit()
+    return RedirectResponse(f"/ui/pilots/{p.id}", status_code=303)
+
+
+@router.post("/ui/pilots/{pilot_id}/activate")
+def pilot_activate(pilot_id: uuid.UUID, db: Session = Depends(session)) -> RedirectResponse:
+    p = _pilot(db, pilot_id)
+    s = readiness_summary(db, p, settings)
+    if not s["ready"]:
+        raise HTTPException(409, "pilot_readiness_failed")
+    _transition(p, "active")
+    audit(db, p, "activated", None, after={"status": p.status})
+    db.commit()
+    return RedirectResponse(f"/ui/pilots/{p.id}", status_code=303)
+
+
+@router.post("/ui/pilots/{pilot_id}/pause")
+def pilot_pause(pilot_id: uuid.UUID, db: Session = Depends(session)) -> RedirectResponse:
+    p = _pilot(db, pilot_id)
+    _transition(p, "paused")
+    audit(db, p, "paused", None, after={"status": p.status})
+    db.commit()
+    return RedirectResponse(f"/ui/pilots/{p.id}", status_code=303)
+
+
+@router.post("/ui/pilots/{pilot_id}/close")
+def pilot_close(pilot_id: uuid.UUID, db: Session = Depends(session)) -> RedirectResponse:
+    p = _pilot(db, pilot_id)
+    _transition(p, "closed")
+    audit(db, p, "closed", None, after={"status": p.status})
+    db.commit()
+    return RedirectResponse(f"/ui/pilots/{p.id}", status_code=303)
+
+
+@router.get("/ui/pilots/{pilot_id}/exports", response_class=HTMLResponse)
+def pilot_exports(pilot_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+    p = _pilot(db, pilot_id)
+    latest = db.scalar(
+        select(PilotExportRun).where(PilotExportRun.pilot_id == p.id).order_by(PilotExportRun.created_at.desc())
+    )
+    body = f"<p>Last export: {esc(latest.created_at if latest else 'never')}</p><form method='post' action='/ui/pilots/{p.id}/exports/generate'><button>Generate export pack</button></form>"
+    if latest:
+        body += "<ul>" + "".join(f"<li>{esc(k)}: {esc(v)}</li>" for k, v in latest.files.items()) + "</ul>"
+    return page("Pilot exports", body)
+
+
+@router.post("/ui/pilots/{pilot_id}/exports/generate")
+def pilot_export_generate(pilot_id: uuid.UUID, db: Session = Depends(session)) -> RedirectResponse:
+    generate_export(db, _pilot(db, pilot_id), settings, None)
+    return RedirectResponse(f"/ui/pilots/{pilot_id}/exports", status_code=303)
+
+
+@router.get("/ui/pilots/{pilot_id}/retrospective", response_class=HTMLResponse)
+def pilot_retrospective(pilot_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+    p = _pilot(db, pilot_id)
+    r = db.scalar(
+        select(PilotRetrospective)
+        .where(PilotRetrospective.pilot_id == p.id)
+        .order_by(PilotRetrospective.updated_at.desc())
+    )
+    fields = (
+        "what_worked",
+        "what_failed",
+        "false_positives",
+        "false_negatives",
+        "operator_friction",
+        "demo_quality_issues",
+        "source_quality_issues",
+        "business_objections",
+        "reply_quality",
+        "meeting_quality",
+        "next_sprint_recommendation",
+    )
+    form = (
+        "<form method='post'>"
+        + "".join(
+            f"<label>{f.replace('_', ' ').title()}<textarea name='{f}'>{esc(getattr(r, f, '') if r else '')}</textarea></label>"
+            for f in fields
+        )
+        + "<button>Save retrospective</button></form>"
+    )
+    return page("Pilot retrospective", form)
+
+
+@router.post("/ui/pilots/{pilot_id}/retrospective")
+def pilot_retrospective_save(
+    pilot_id: uuid.UUID,
+    what_worked: str = Form(""),
+    what_failed: str = Form(""),
+    false_positives: str = Form(""),
+    false_negatives: str = Form(""),
+    operator_friction: str = Form(""),
+    demo_quality_issues: str = Form(""),
+    source_quality_issues: str = Form(""),
+    business_objections: str = Form(""),
+    reply_quality: str = Form(""),
+    meeting_quality: str = Form(""),
+    next_sprint_recommendation: str = Form(""),
+    db: Session = Depends(session),
+) -> RedirectResponse:
+    p = _pilot(db, pilot_id)
+    r = db.scalar(
+        select(PilotRetrospective)
+        .where(PilotRetrospective.pilot_id == p.id)
+        .order_by(PilotRetrospective.updated_at.desc())
+    )
+    values = locals()
+    fields = (
+        "what_worked",
+        "what_failed",
+        "false_positives",
+        "false_negatives",
+        "operator_friction",
+        "demo_quality_issues",
+        "source_quality_issues",
+        "business_objections",
+        "reply_quality",
+        "meeting_quality",
+        "next_sprint_recommendation",
+    )
+    if r is None:
+        r = PilotRetrospective(pilot_id=p.id)
+        db.add(r)
+    for field in fields:
+        setattr(r, field, values[field])
+    r.updated_at = datetime.now(UTC)
+    audit(db, p, "retrospective_saved", None, after={"pilot_id": str(p.id)})
+    db.commit()
+    return RedirectResponse(f"/ui/pilots/{p.id}/retrospective", status_code=303)

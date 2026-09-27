@@ -21,4 +21,5 @@ class Settings(BaseSettings):
     audit_artifact_root: str = "artifacts/audits"
     audit_max_concurrency: int = 1
     demo_artifact_root: str = "artifacts"
+    export_root: str = "exports"
     model_config = SettingsConfigDict(env_prefix="LBOE_", extra="ignore")
