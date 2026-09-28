@@ -57,3 +57,18 @@ Invoke-RestMethod "$base/v1/businesses/$businessId/crm-event" -Method Post -Cont
 Invoke-RestMethod "$base/v1/reports/pilot?include_details=true"
 Invoke-RestMethod "$base/v1/campaigns/$campaignId/reports/pilot"
 ```
+## Proposal pack (Sprint 26)
+
+`POST /v1/businesses/{business_id}/proposal`
+
+```json
+{"operator_requested": true, "idempotency_key": "proposal-demo-1"}
+```
+
+`POST /v1/proposals/{proposal_id}/review`
+
+```json
+{"decision":"approve","reviewer":"operator","checks":{"evidence_backed":true,"pricing_placeholder":true,"timeline_placeholder":true,"not_a_contract":true,"not_sent":true}}
+```
+
+`POST /v1/proposals/{proposal_id}/export`

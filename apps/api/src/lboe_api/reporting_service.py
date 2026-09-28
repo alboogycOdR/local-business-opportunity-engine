@@ -30,6 +30,8 @@ from .db import (
     OutreachExecutionRecord,
     OutreachReadinessReview,
     PipelineEvent,
+    ProposalExport,
+    ProposalPackage,
     SourceObservation,
     SuppressionEntry,
     Website,
@@ -215,6 +217,16 @@ def build_pilot_report(
         for item in session.scalars(select(LeadCrmEvent)).all()
         if item.business_id in business_ids and _in_window(item.occurred_at, start, end)
     ]
+    proposals = [
+        item
+        for item in session.scalars(select(ProposalPackage)).all()
+        if item.business_id in business_ids and _in_window(item.created_at, start, end)
+    ]
+    proposal_exports = [
+        item
+        for item in session.scalars(select(ProposalExport)).all()
+        if any(item.proposal_id == p.id for p in proposals)
+    ]
     suppressions = [
         item
         for item in session.scalars(select(SuppressionEntry)).all()
@@ -267,6 +279,13 @@ def build_pilot_report(
         {"code": "readiness_reviews", "count": len(readiness)},
         {"code": "manual_outreach_logs", "count": len(executions)},
         {"code": "system_delivery_count", "count": 0},
+        {"code": "proposal_packages_created", "count": len(proposals)},
+        {"code": "proposal_approved", "count": sum(1 for item in proposals if item.status == "approved")},
+        {"code": "proposal_exported", "count": len(proposal_exports)},
+        {
+            "code": "proposal_ready_queue_count",
+            "count": sum(1 for item in proposals if item.status in {"draft", "changes_requested"}),
+        },
         {"code": "suppression_entries", "count": len(suppressions)},
         {"code": "do_not_contact_holds", "count": sum(1 for item in risks if item.code == "DO_NOT_CONTACT")},
     ]

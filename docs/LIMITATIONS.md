@@ -24,3 +24,5 @@ facts and templates are deterministic.
 Calibration remains descriptive until reply/meeting data exists; the first real
 pilot had no manual contacts. Batch-2 profiles are operator configuration
 artifacts and are not automatically loaded or launched.
+
+- Proposal packs use pricing and timeline placeholders and require operator review; they are not quotes or contracts.

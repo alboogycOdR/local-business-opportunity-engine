@@ -596,6 +596,73 @@ class OutreachObjection(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ProposalPackage(Base):
+    __tablename__ = "proposal_packages"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    score_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("opportunity_scores.id"), nullable=True)
+    audit_run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("audit_runs.id"), nullable=True)
+    brief_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("business_briefs.id"), nullable=True)
+    demo_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("generated_demos.id"), nullable=True)
+    version: Mapped[str] = mapped_column(String(100))
+    proposal_type: Mapped[str] = mapped_column(String(60))
+    status: Mapped[str] = mapped_column(String(40), index=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ProposalSection(Base):
+    __tablename__ = "proposal_sections"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposal_packages.id"), index=True)
+    section_type: Mapped[str] = mapped_column(String(60))
+    heading: Mapped[str] = mapped_column(String(300))
+    body: Mapped[str] = mapped_column(Text)
+    sort_order: Mapped[int] = mapped_column()
+    evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+
+
+class ProposalLineItem(Base):
+    __tablename__ = "proposal_line_items"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposal_packages.id"), index=True)
+    code: Mapped[str] = mapped_column(String(100))
+    label: Mapped[str] = mapped_column(String(300))
+    description: Mapped[str] = mapped_column(Text)
+    quantity: Mapped[int] = mapped_column(default=1)
+    unit: Mapped[str] = mapped_column(String(80))
+    pricing_status: Mapped[str] = mapped_column(String(40))
+
+
+class ProposalAssumption(Base):
+    __tablename__ = "proposal_assumptions"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposal_packages.id"), index=True)
+    code: Mapped[str] = mapped_column(String(100))
+    text: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(60))
+
+
+class ProposalReviewEvent(Base):
+    __tablename__ = "proposal_review_events"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposal_packages.id"), index=True)
+    decision: Mapped[str] = mapped_column(String(40))
+    reviewer: Mapped[str] = mapped_column(String(200))
+    notes: Mapped[str] = mapped_column(Text, default="")
+    checks: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ProposalExport(Base):
+    __tablename__ = "proposal_exports"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposal_packages.id"), index=True)
+    status: Mapped[str] = mapped_column(String(30))
+    files: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Operator(Base):
     __tablename__ = "operators"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)

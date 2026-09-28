@@ -45,6 +45,7 @@ from lboe_api.db import (
     PilotRetrospective,
     PilotRun,
     PilotSourcePolicyAcknowledgement,
+    ProposalPackage,
     SuppressionEntry,
 )
 from lboe_api.demo_generator import qa_explanations
@@ -1279,3 +1280,88 @@ def pilot_retrospective_save(
     audit(db, p, "retrospective_saved", None, after={"pilot_id": str(p.id)})
     db.commit()
     return RedirectResponse(f"/ui/pilots/{p.id}/retrospective", status_code=303)
+
+
+@router.get("/ui/businesses/{business_id}/proposal", response_class=HTMLResponse)
+def proposal_for_business(business_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+    business = db.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    proposals = db.scalars(
+        select(ProposalPackage)
+        .where(ProposalPackage.business_id == business_id)
+        .order_by(ProposalPackage.created_at.desc())
+    ).all()
+    links = "".join(
+        f'<li><a href="/ui/proposals/{p.id}">{html.escape(p.proposal_type)} — {html.escape(p.status)}</a></li>'
+        for p in proposals
+    )
+    return HTMLResponse(
+        f"<html><body><h1>Proposal packs: {html.escape(business.display_name)}</h1><p>This proposal pack is for operator review. LBOE does not send proposals, collect payments, create contracts, or provide legal advice.</p><ul>{links or '<li>No proposal packs yet.</li>'}</ul></body></html>"
+    )
+
+
+@router.get("/ui/proposals/{proposal_id}", response_class=HTMLResponse)
+def proposal_detail(proposal_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+    p = db.get(ProposalPackage, proposal_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="proposal_not_found")
+    return HTMLResponse(
+        f'<html><body><h1>{html.escape(p.proposal_type)}</h1><p>Status: {html.escape(p.status)}</p><p>{html.escape(p.summary)}</p><p><a href="/ui/proposals/{p.id}/review">Review</a> | <a href="/ui/proposals/{p.id}/export">Export</a></p></body></html>'
+    )
+
+
+@router.get("/ui/proposals/{proposal_id}/review", response_class=HTMLResponse)
+def proposal_review_page(proposal_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+    p = db.get(ProposalPackage, proposal_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="proposal_not_found")
+    return HTMLResponse(
+        f'<html><body><h1>Review proposal</h1><p>Status: {html.escape(p.status)}</p><form method="post"><input name="reviewer" value="operator"><textarea name="notes"></textarea><button name="decision" value="approve">Approve</button><button name="decision" value="request_changes">Request changes</button></form></body></html>'
+    )
+
+
+@router.post("/ui/proposals/{proposal_id}/review")
+def proposal_review_submit(
+    proposal_id: uuid.UUID, decision: str = Form(...), reviewer: str = Form(...), notes: str = Form("")
+) -> RedirectResponse:
+    from lboe_api.main import review_proposal
+
+    with SessionLocal() as db:
+        review_proposal(proposal_id, {"decision": decision, "reviewer": reviewer, "notes": notes}, db)
+    return RedirectResponse(f"/ui/proposals/{proposal_id}", status_code=303)
+
+
+@router.get("/ui/proposals/{proposal_id}/export", response_class=HTMLResponse)
+def proposal_export_page(proposal_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+    p = db.get(ProposalPackage, proposal_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="proposal_not_found")
+    return HTMLResponse(
+        f'<html><body><h1>Proposal export</h1><p>Status: {html.escape(p.status)}</p><form method="post"><button>Export locally</button></form></body></html>'
+    )
+
+
+@router.post("/ui/proposals/{proposal_id}/export")
+def proposal_export_submit(proposal_id: uuid.UUID) -> RedirectResponse:
+    from lboe_api.main import export_proposal
+
+    with SessionLocal() as db:
+        export_proposal(proposal_id, db)
+    return RedirectResponse(f"/ui/proposals/{proposal_id}", status_code=303)
+
+
+@router.get("/ui/queues/proposal-ready", response_class=HTMLResponse)
+def proposal_ready_queue(db: Session = Depends(session)) -> HTMLResponse:
+    proposals = db.scalars(
+        select(ProposalPackage)
+        .where(ProposalPackage.status.in_(["draft", "changes_requested"]))
+        .order_by(ProposalPackage.created_at)
+    ).all()
+    rows = "".join(
+        f'<li><a href="/ui/proposals/{p.id}">{html.escape(str(p.business_id))}</a> — {html.escape(p.status)}</li>'
+        for p in proposals
+    )
+    return HTMLResponse(
+        f"<html><body><h1>Proposal-ready queue</h1><ul>{rows or '<li>Queue empty.</li>'}</ul></body></html>"
+    )

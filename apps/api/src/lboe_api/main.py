@@ -86,6 +86,12 @@ from .db import (
     OutreachReadinessCheck,
     OutreachReadinessReview,
     PipelineEvent,
+    ProposalAssumption,
+    ProposalExport,
+    ProposalLineItem,
+    ProposalPackage,
+    ProposalReviewEvent,
+    ProposalSection,
     SourceObservation,
     SuppressionEntry,
     Website,
@@ -98,6 +104,9 @@ from .enrichment_service import enrichment_idempotency_key, execute_enrichment
 from .logging import configure_logging
 from .outreach_service import VERSION as OUTREACH_VERSION
 from .outreach_service import build_messages, safety_checks
+from .proposal_service import eligibility as proposal_eligibility
+from .proposal_service import export_package
+from .proposal_service import generate as generate_proposal
 from .readiness_service import READINESS_CHANNELS, readiness_checks
 from .reporting_service import build_pilot_report
 from .scoring_service import execute_score, score_idempotency_key
@@ -2298,6 +2307,186 @@ def list_suppressions(business_id: uuid.UUID, session: Session = Depends(db_sess
     return [
         {"id": str(item.id), "reason": item.reason, "channel": item.channel, "created_at": item.created_at}
         for item in session.scalars(select(SuppressionEntry).where(SuppressionEntry.business_id == business_id)).all()
+    ]
+
+
+def proposal_dict(p: ProposalPackage, session: Session) -> dict[str, Any]:
+    sections = session.scalars(
+        select(ProposalSection).where(ProposalSection.proposal_id == p.id).order_by(ProposalSection.sort_order)
+    ).all()
+    items = session.scalars(select(ProposalLineItem).where(ProposalLineItem.proposal_id == p.id)).all()
+    assumptions = session.scalars(select(ProposalAssumption).where(ProposalAssumption.proposal_id == p.id)).all()
+    reviews = session.scalars(
+        select(ProposalReviewEvent)
+        .where(ProposalReviewEvent.proposal_id == p.id)
+        .order_by(ProposalReviewEvent.created_at)
+    ).all()
+    exports = session.scalars(
+        select(ProposalExport).where(ProposalExport.proposal_id == p.id).order_by(ProposalExport.created_at)
+    ).all()
+    return {
+        "id": str(p.id),
+        "business_id": str(p.business_id),
+        "brief_id": str(p.brief_id) if p.brief_id else None,
+        "score_id": str(p.score_id) if p.score_id else None,
+        "demo_id": str(p.demo_id) if p.demo_id else None,
+        "version": p.version,
+        "proposal_type": p.proposal_type,
+        "status": p.status,
+        "summary": p.summary,
+        "created_at": p.created_at,
+        "sections": [
+            {
+                "id": str(s.id),
+                "section_type": s.section_type,
+                "heading": s.heading,
+                "body": s.body,
+                "evidence": s.evidence,
+            }
+            for s in sections
+        ],
+        "line_items": [
+            {
+                "id": str(i.id),
+                "code": i.code,
+                "label": i.label,
+                "description": i.description,
+                "pricing_status": i.pricing_status,
+            }
+            for i in items
+        ],
+        "assumptions": [{"code": a.code, "text": a.text} for a in assumptions],
+        "reviews": [
+            {"id": str(r.id), "decision": r.decision, "reviewer": r.reviewer, "notes": r.notes, "checks": r.checks}
+            for r in reviews
+        ],
+        "exports": [{"id": str(e.id), "status": e.status, "files": e.files} for e in exports],
+        "safe_next_action": "operator_review_before_export_or_external_use",
+    }
+
+
+@app.post("/v1/businesses/{business_id}/proposal")
+def create_proposal(
+    business_id: uuid.UUID, payload: dict[str, Any] | None = None, session: Session = Depends(db_session)
+) -> dict[str, Any]:
+    business = session.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    data = payload or {}
+    key = (
+        f"GENERATE_PROPOSAL:{business_id}:{data.get('idempotency_key', 'default')}:{data.get('proposal_type', 'auto')}"
+    )
+    job = session.scalar(select(Job).where(Job.idempotency_key == key))
+    if job and job.payload.get("proposal_id"):
+        existing = session.get(ProposalPackage, uuid.UUID(str(job.payload["proposal_id"])))
+        if existing:
+            return proposal_dict(existing, session)
+    ok, reason, *_ = proposal_eligibility(session, business, bool(data.get("operator_requested", False)))
+    if not ok:
+        j = Job(
+            job_type="GENERATE_PROPOSAL",
+            idempotency_key=key,
+            status="not_eligible",
+            payload={"reason": reason, "business_id": str(business_id)},
+        )
+        session.add(j)
+        session.commit()
+        return {
+            "status": "not_proposal_eligible",
+            "reason": reason,
+            "business_id": str(business_id),
+            "job_id": str(j.id),
+        }
+    j = Job(
+        job_type="GENERATE_PROPOSAL", idempotency_key=key, status="running", payload={"business_id": str(business_id)}
+    )
+    session.add(j)
+    session.commit()
+    try:
+        p = generate_proposal(session, business, data.get("proposal_type"), bool(data.get("operator_requested", False)))
+        j.status = "succeeded"
+        j.payload = {"proposal_id": str(p.id)}
+        session.commit()
+        return proposal_dict(p, session)
+    except ValueError as exc:
+        j.status = "not_eligible"
+        j.payload = {"reason": str(exc)}
+        session.commit()
+        return {"status": "not_proposal_eligible", "reason": str(exc), "job_id": str(j.id)}
+
+
+@app.get("/v1/businesses/{business_id}/proposals")
+def list_proposals(business_id: uuid.UUID, session: Session = Depends(db_session)) -> list[dict[str, Any]]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    return [
+        proposal_dict(p, session)
+        for p in session.scalars(
+            select(ProposalPackage)
+            .where(ProposalPackage.business_id == business_id)
+            .order_by(ProposalPackage.created_at)
+        ).all()
+    ]
+
+
+@app.get("/v1/proposals/{proposal_id}")
+def get_proposal(proposal_id: uuid.UUID, session: Session = Depends(db_session)) -> dict[str, Any]:
+    p = session.get(ProposalPackage, proposal_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="proposal_not_found")
+    return proposal_dict(p, session)
+
+
+@app.post("/v1/proposals/{proposal_id}/review")
+def review_proposal(
+    proposal_id: uuid.UUID, payload: dict[str, Any], session: Session = Depends(db_session)
+) -> dict[str, Any]:
+    p = session.get(ProposalPackage, proposal_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="proposal_not_found")
+    decision = payload.get("decision")
+    reviewer = payload.get("reviewer")
+    if decision not in {"approve", "reject", "request_changes", "archive"} or not reviewer:
+        raise HTTPException(status_code=422, detail="invalid_proposal_review")
+    checks = payload.get("checks") or {
+        "evidence_backed": True,
+        "pricing_placeholder": True,
+        "timeline_placeholder": True,
+        "not_a_contract": True,
+        "not_sent": True,
+    }
+    if decision == "approve" and not all(checks.values()):
+        raise HTTPException(status_code=422, detail="proposal_safety_checks_failed")
+    p.status = {
+        "approve": "approved",
+        "reject": "rejected",
+        "request_changes": "changes_requested",
+        "archive": "archived",
+    }[decision]
+    session.add(
+        ProposalReviewEvent(
+            proposal_id=p.id, decision=decision, reviewer=reviewer, notes=payload.get("notes", ""), checks=checks
+        )
+    )
+    session.commit()
+    return proposal_dict(p, session)
+
+
+@app.post("/v1/proposals/{proposal_id}/export")
+def export_proposal(proposal_id: uuid.UUID, session: Session = Depends(db_session)) -> dict[str, Any]:
+    p = session.get(ProposalPackage, proposal_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="proposal_not_found")
+    if p.status != "approved":
+        raise HTTPException(status_code=422, detail="proposal_review_required")
+    return proposal_dict(p, session) | {"export": export_package(session, p, settings).files}
+
+
+@app.get("/v1/proposals/{proposal_id}/exports")
+def list_proposal_exports(proposal_id: uuid.UUID, session: Session = Depends(db_session)) -> list[dict[str, Any]]:
+    return [
+        {"id": str(e.id), "status": e.status, "files": e.files, "created_at": e.created_at}
+        for e in session.scalars(select(ProposalExport).where(ProposalExport.proposal_id == proposal_id)).all()
     ]
 
 

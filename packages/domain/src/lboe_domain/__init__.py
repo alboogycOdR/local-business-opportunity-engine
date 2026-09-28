@@ -55,6 +55,17 @@ from .outreach import (
     OutreachDraftRequest,
     OutreachOffer,
 )
+from .proposal import (
+    ProposalAssumption,
+    ProposalEvidenceRef,
+    ProposalExportResult,
+    ProposalGenerationRequest,
+    ProposalLineItem,
+    ProposalPackageResult,
+    ProposalReviewRequest,
+    ProposalReviewResult,
+    ProposalSection,
+)
 from .readiness import (
     OutreachChannelApproval,
     OutreachReadinessCheck,
@@ -159,6 +170,15 @@ __all__ = [
     "PilotReportResult",
     "PilotReportWindow",
     "QualityMetric",
+    "ProposalAssumption",
+    "ProposalEvidenceRef",
+    "ProposalGenerationRequest",
+    "ProposalLineItem",
+    "ProposalPackageResult",
+    "ProposalReviewRequest",
+    "ProposalReviewResult",
+    "ProposalSection",
+    "ProposalExportResult",
     "WebsiteResolutionResult",
     "transition",
     "validate_transition",
