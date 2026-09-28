@@ -1419,3 +1419,72 @@ def delivery_queue(db: Session = Depends(session)) -> HTMLResponse:
         for p in projects
     )
     return HTMLResponse(f"<html><body><h1>Delivery queue</h1><ul>{rows or '<li>Queue empty.</li>'}</ul></body></html>")
+
+
+@router.post("/ui/businesses/{business_id}/delivery")
+def create_delivery_from_ui(
+    business_id: uuid.UUID, title: str = Form("Delivery project"), db: Session = Depends(session)
+) -> RedirectResponse:
+    from lboe_api.main import create_delivery_project
+
+    result = create_delivery_project(business_id, {"title": title, "operator_created": True}, db)
+    return RedirectResponse(
+        f"/ui/delivery-projects/{result['id']}" if result.get("id") else f"/ui/businesses/{business_id}/delivery",
+        status_code=303,
+    )
+
+
+@router.post("/ui/delivery-projects/{project_id}/checklist")
+def update_delivery_checklist_ui(
+    project_id: uuid.UUID,
+    category: str = Form(...),
+    code: str = Form(...),
+    status: str = Form("verified"),
+    notes: str = Form(""),
+    db: Session = Depends(session),
+) -> RedirectResponse:
+    from lboe_api.main import update_delivery_checklist
+
+    update_delivery_checklist(project_id, {"category": category, "code": code, "status": status, "notes": notes}, db)
+    return RedirectResponse(f"/ui/delivery-projects/{project_id}", status_code=303)
+
+
+@router.post("/ui/delivery-projects/{project_id}/milestone")
+def add_delivery_milestone_ui(
+    project_id: uuid.UUID, milestone_type: str = Form(...), note: str = Form(""), db: Session = Depends(session)
+) -> RedirectResponse:
+    from lboe_api.main import add_delivery_milestone
+
+    add_delivery_milestone(project_id, {"milestone_type": milestone_type, "status": "complete", "note": note}, db)
+    return RedirectResponse(f"/ui/delivery-projects/{project_id}", status_code=303)
+
+
+@router.post("/ui/delivery-projects/{project_id}/approval")
+def add_delivery_approval_ui(
+    project_id: uuid.UUID,
+    approved_item: str = Form(...),
+    client_assertion: str = Form(""),
+    notes: str = Form(""),
+    db: Session = Depends(session),
+) -> RedirectResponse:
+    from lboe_api.main import add_delivery_approval
+
+    add_delivery_approval(
+        project_id,
+        {
+            "approval_type": "client_approval",
+            "approved_item": approved_item,
+            "client_assertion": client_assertion,
+            "notes": notes,
+        },
+        db,
+    )
+    return RedirectResponse(f"/ui/delivery-projects/{project_id}", status_code=303)
+
+
+@router.post("/ui/delivery-projects/{project_id}/export")
+def export_delivery_ui(project_id: uuid.UUID, db: Session = Depends(session)) -> RedirectResponse:
+    from lboe_api.main import export_delivery_project
+
+    export_delivery_project(project_id, db)
+    return RedirectResponse(f"/ui/delivery-projects/{project_id}", status_code=303)
