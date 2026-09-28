@@ -178,8 +178,8 @@ def map_panel(campaign: Any, businesses: Sequence[Business]) -> str:
         or "<p class='muted'>Run discovery to add businesses to this campaign.</p>"
     )
     return (
-        f"<div class='map-shell'><iframe class='map-iframe' src='https://www.google.com/maps?q={maps_query}&output=embed' loading='lazy' referrerpolicy='no-referrer-when-downgrade' title='Google Maps view of {geography}'></iframe>"
-        f"<div class='map-overlay'><div class='map-label'>Campaign area · {geography}</div><div class='map-context'><strong>Geographic view</strong><span>Open the full map for live Google Maps pins.</span></div><a class='button button-secondary map-open' href='{maps_url}' target='_blank' rel='noreferrer'>Open full map</a></div></div>"
+        f"<div class='map-caption' style='display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 8px;padding:0 2px'><strong>Geographic view</strong><span class='muted'>Campaign area · {geography}</span></div><div class='map-shell'><iframe class='map-iframe' src='https://www.google.com/maps?q={maps_query}&output=embed' loading='lazy' referrerpolicy='no-referrer-when-downgrade' title='Google Maps view of {geography}'></iframe>"
+        f"<div class='map-overlay'><div class='map-context' style='position:absolute;left:50%;top:50%;z-index:2;display:grid;gap:4px;transform:translate(-50%,-50%);padding:15px 18px;border-radius:12px;background:rgba(20,33,61,.86);color:#fff;text-align:center;max-width:270px'><strong>Map view</strong><span style='font-size:.75rem;color:#dce4f2'>Open the full map for live Google Maps pins.</span></div><a class='button button-secondary map-open' href='{maps_url}' target='_blank' rel='noreferrer'>Open full map</a></div></div>"
         f"<div class='map-leads'><div class='section-head'><div><h3>Leads in this area</h3><p class='muted'>Select a lead to see evidence and the next action.</p></div><span class='badge'>{len(businesses)} businesses</span></div><div class='map-lead-list'>{lead_links}</div></div>"
     )
 
@@ -330,8 +330,15 @@ async def discover_from_ui(
         result = await discover_campaign(campaign_id, body, db)
         status = result.get("status", "completed")
     except HTTPException as exc:
-        status = f"error:{exc.detail}"
-    return RedirectResponse(f"/ui/campaigns/{campaign_id}?discovery_status={esc(status)}", status_code=303)
+        detail = exc.detail
+        if isinstance(detail, dict):
+            status = f"error: {detail.get('error', 'discovery_failed')} (job {detail.get('job_id', 'unknown')})"
+        else:
+            status = f"error: {detail}"
+    except Exception as exc:  # noqa: BLE001
+        status = f"error: {type(exc).__name__}"
+    encoded_status = __import__("urllib.parse", fromlist=["quote_plus"]).quote_plus(status)
+    return RedirectResponse(f"/ui/campaigns/{campaign_id}?discovery_status={encoded_status}", status_code=303)
 
 
 @router.get("/ui/campaigns/{campaign_id}", response_class=HTMLResponse)
