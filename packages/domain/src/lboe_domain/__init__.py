@@ -20,6 +20,13 @@ from .brief import (
     BusinessBriefSection,
 )
 from .crm import LeadCrmEvent, LeadCrmOutcome, LeadNextStep, LeadResponseLogRequest, LeadResponseLogResult
+from .delivery import (
+    DeliveryApprovalRequest,
+    DeliveryChecklistRequest,
+    DeliveryExportResult,
+    DeliveryMilestoneRequest,
+    DeliveryProjectRequest,
+)
 from .demo import DemoArtifact, DemoClaim, DemoGenerationRequest, DemoQaResult, DemoSection, GeneratedDemo
 from .discovery import (
     CandidateBusiness,
@@ -179,6 +186,11 @@ __all__ = [
     "ProposalReviewResult",
     "ProposalSection",
     "ProposalExportResult",
+    "DeliveryApprovalRequest",
+    "DeliveryChecklistRequest",
+    "DeliveryExportResult",
+    "DeliveryMilestoneRequest",
+    "DeliveryProjectRequest",
     "WebsiteResolutionResult",
     "transition",
     "validate_transition",

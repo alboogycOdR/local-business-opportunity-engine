@@ -11,6 +11,7 @@ import uuid
 from collections.abc import AsyncIterator, Generator
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -60,6 +61,11 @@ from .db import (
     BusinessExternalIdentity,
     Campaign,
     Contact,
+    DeliveryApproval,
+    DeliveryChecklistItem,
+    DeliveryExport,
+    DeliveryMilestone,
+    DeliveryProject,
     DemoArtifact,
     DemoQaRun,
     DemoReview,
@@ -2307,6 +2313,282 @@ def list_suppressions(business_id: uuid.UUID, session: Session = Depends(db_sess
     return [
         {"id": str(item.id), "reason": item.reason, "channel": item.channel, "created_at": item.created_at}
         for item in session.scalars(select(SuppressionEntry).where(SuppressionEntry.business_id == business_id)).all()
+    ]
+
+
+DELIVERY_INTAKE_CODES = (
+    "business_name",
+    "owner_contact",
+    "services",
+    "pricing_menu",
+    "brand_assets",
+    "photos_media",
+    "domain_status",
+    "hosting_preference",
+    "booking_preferences",
+    "contact_preferences",
+    "social_links",
+    "business_hours",
+    "location_details",
+)
+DELIVERY_ACCESS_CODES = (
+    "domain_access",
+    "hosting_access",
+    "dns_access",
+    "logo_files",
+    "images",
+    "copy_content",
+    "booking_tool",
+    "analytics_access",
+    "email_account",
+)
+
+
+def delivery_dict(project: DeliveryProject, session: Session) -> dict[str, Any]:
+    checks = session.scalars(
+        select(DeliveryChecklistItem).where(DeliveryChecklistItem.delivery_project_id == project.id)
+    ).all()
+    milestones = session.scalars(
+        select(DeliveryMilestone)
+        .where(DeliveryMilestone.delivery_project_id == project.id)
+        .order_by(DeliveryMilestone.created_at)
+    ).all()
+    approvals = session.scalars(
+        select(DeliveryApproval)
+        .where(DeliveryApproval.delivery_project_id == project.id)
+        .order_by(DeliveryApproval.created_at)
+    ).all()
+    exports = session.scalars(
+        select(DeliveryExport)
+        .where(DeliveryExport.delivery_project_id == project.id)
+        .order_by(DeliveryExport.created_at)
+    ).all()
+    return {
+        "id": str(project.id),
+        "business_id": str(project.business_id),
+        "proposal_package_id": str(project.proposal_package_id) if project.proposal_package_id else None,
+        "campaign_id": str(project.campaign_id) if project.campaign_id else None,
+        "status": project.status,
+        "title": project.title,
+        "summary": project.summary,
+        "created_at": project.created_at,
+        "updated_at": project.updated_at,
+        "checklist": [
+            {"id": str(i.id), "category": i.category, "code": i.code, "status": i.status, "notes": i.notes}
+            for i in checks
+        ],
+        "milestones": [
+            {
+                "id": str(m.id),
+                "milestone_type": m.milestone_type,
+                "status": m.status,
+                "note": m.note,
+                "created_at": m.created_at,
+                "completed_at": m.completed_at,
+            }
+            for m in milestones
+        ],
+        "approvals": [
+            {
+                "id": str(a.id),
+                "approval_type": a.approval_type,
+                "approved_item": a.approved_item,
+                "operator_notes": a.operator_notes,
+                "client_assertion": a.client_assertion,
+                "artifact_reference": a.artifact_reference,
+            }
+            for a in approvals
+        ],
+        "exports": [{"id": str(e.id), "status": e.status, "files": e.files} for e in exports],
+        "safety_notice": (
+            "LBOE does not store credentials. Use an approved password manager. "
+            "Approval records are operator assertions, not e-signatures."
+        ),
+    }
+
+
+@app.post("/v1/businesses/{business_id}/delivery-project")
+def create_delivery_project(
+    business_id: uuid.UUID, payload: dict[str, Any], session: Session = Depends(db_session)
+) -> dict[str, Any]:
+    business = session.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    proposal_id = uuid.UUID(str(payload["proposal_package_id"])) if payload.get("proposal_package_id") else None
+    proposal = session.get(ProposalPackage, proposal_id) if proposal_id else None
+    if not (
+        (proposal and proposal.business_id == business_id and proposal.status == "approved")
+        or business.state == LeadState.WON.value
+        or payload.get("operator_created")
+    ):
+        return {
+            "status": "not_delivery_eligible",
+            "reason": "approved_proposal_or_won_lead_required",
+            "business_id": str(business_id),
+        }
+    project = DeliveryProject(
+        business_id=business_id,
+        proposal_package_id=proposal.id if proposal else None,
+        campaign_id=business.campaign_id,
+        status="intake_pending",
+        title=payload.get("title") or f"Delivery for {business.display_name}",
+        summary=payload.get("summary", ""),
+    )
+    session.add(project)
+    session.flush()
+    for code in DELIVERY_INTAKE_CODES:
+        session.add(DeliveryChecklistItem(delivery_project_id=project.id, category="intake", code=code))
+    for code in DELIVERY_ACCESS_CODES:
+        session.add(
+            DeliveryChecklistItem(
+                delivery_project_id=project.id,
+                category="access_assets",
+                code=code,
+                notes="Do not store credentials in LBOE; use an approved password manager.",
+            )
+        )
+    session.commit()
+    session.refresh(project)
+    return delivery_dict(project, session)
+
+
+@app.get("/v1/businesses/{business_id}/delivery-projects")
+def list_delivery_projects(business_id: uuid.UUID, session: Session = Depends(db_session)) -> list[dict[str, Any]]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    return [
+        delivery_dict(p, session)
+        for p in session.scalars(
+            select(DeliveryProject)
+            .where(DeliveryProject.business_id == business_id)
+            .order_by(DeliveryProject.created_at)
+        ).all()
+    ]
+
+
+@app.get("/v1/delivery-projects/{project_id}")
+def get_delivery_project(project_id: uuid.UUID, session: Session = Depends(db_session)) -> dict[str, Any]:
+    p = session.get(DeliveryProject, project_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="delivery_project_not_found")
+    return delivery_dict(p, session)
+
+
+@app.post("/v1/delivery-projects/{project_id}/checklist")
+def update_delivery_checklist(
+    project_id: uuid.UUID, payload: dict[str, Any], session: Session = Depends(db_session)
+) -> dict[str, Any]:
+    p = session.get(DeliveryProject, project_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="delivery_project_not_found")
+    if (
+        payload.get("category") not in {"intake", "access_assets"}
+        or payload.get("code") not in DELIVERY_INTAKE_CODES + DELIVERY_ACCESS_CODES
+    ):
+        raise HTTPException(status_code=422, detail="invalid_checklist_item")
+    item = session.scalar(
+        select(DeliveryChecklistItem).where(
+            DeliveryChecklistItem.delivery_project_id == project_id, DeliveryChecklistItem.code == payload["code"]
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="checklist_item_not_found")
+    item.status = payload.get("status", "pending")
+    item.notes = payload.get("notes", "")
+    session.commit()
+    return delivery_dict(p, session)
+
+
+@app.post("/v1/delivery-projects/{project_id}/milestone")
+def add_delivery_milestone(
+    project_id: uuid.UUID, payload: dict[str, Any], session: Session = Depends(db_session)
+) -> dict[str, Any]:
+    p = session.get(DeliveryProject, project_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="delivery_project_not_found")
+    milestone = DeliveryMilestone(
+        delivery_project_id=project_id,
+        milestone_type=payload.get("milestone_type", ""),
+        status=payload.get("status", "complete"),
+        note=payload.get("note", ""),
+        completed_at=datetime.now(UTC) if payload.get("status", "complete") == "complete" else None,
+    )
+    session.add(milestone)
+    session.commit()
+    return delivery_dict(p, session)
+
+
+@app.post("/v1/delivery-projects/{project_id}/approval")
+def add_delivery_approval(
+    project_id: uuid.UUID, payload: dict[str, Any], session: Session = Depends(db_session)
+) -> dict[str, Any]:
+    p = session.get(DeliveryProject, project_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="delivery_project_not_found")
+    session.add(
+        DeliveryApproval(
+            delivery_project_id=project_id,
+            approval_type=payload.get("approval_type", "client_review"),
+            approved_item=payload.get("approved_item", ""),
+            operator_notes=payload.get("notes", ""),
+            client_assertion=payload.get("client_assertion", ""),
+            artifact_reference=payload.get("artifact_reference"),
+        )
+    )
+    if payload.get("approval_type") == "client_approval":
+        p.status = "approved"
+    session.commit()
+    return delivery_dict(p, session)
+
+
+@app.post("/v1/delivery-projects/{project_id}/export")
+def export_delivery_project(project_id: uuid.UUID, session: Session = Depends(db_session)) -> dict[str, Any]:
+    p = session.get(DeliveryProject, project_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="delivery_project_not_found")
+    root = Path(settings.export_root).resolve() / "delivery" / str(project_id)
+    root.mkdir(parents=True, exist_ok=True)
+    data = delivery_dict(p, session)
+    files = {
+        "delivery-summary.json": root / "delivery-summary.json",
+        "delivery-checklist.csv": root / "delivery-checklist.csv",
+        "client-questions.md": root / "client-questions.md",
+        "handoff-notes.md": root / "handoff-notes.md",
+        "milestone-history.csv": root / "milestone-history.csv",
+    }
+    files["delivery-summary.json"].write_text(
+        __import__("json").dumps(
+            {"project_id": str(p.id), "business_id": str(p.business_id), "status": p.status, "title": p.title}, indent=2
+        ),
+        encoding="utf-8",
+    )
+    with files["delivery-checklist.csv"].open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["category", "code", "status", "notes"])
+        w.writerows((i["category"], i["code"], i["status"], i["notes"]) for i in data["checklist"])
+    files["client-questions.md"].write_text(
+        "# Client questions\n\nConfirm scope, content, access status, preferred contacts, and approval criteria.",
+        encoding="utf-8",
+    )
+    files["handoff-notes.md"].write_text(
+        "# Handoff notes\n\nRecord approved handoff steps here. Do not include credentials or payment information.",
+        encoding="utf-8",
+    )
+    with files["milestone-history.csv"].open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["milestone", "status", "note"])
+        w.writerows((m["milestone_type"], m["status"], m["note"]) for m in data["milestones"])
+    ex = DeliveryExport(delivery_project_id=p.id, status="exported", files={k: str(v) for k, v in files.items()})
+    session.add(ex)
+    session.commit()
+    return delivery_dict(p, session)
+
+
+@app.get("/v1/delivery-projects/{project_id}/exports")
+def list_delivery_exports(project_id: uuid.UUID, session: Session = Depends(db_session)) -> list[dict[str, Any]]:
+    return [
+        {"id": str(e.id), "status": e.status, "files": e.files, "created_at": e.created_at}
+        for e in session.scalars(select(DeliveryExport).where(DeliveryExport.delivery_project_id == project_id)).all()
     ]
 
 

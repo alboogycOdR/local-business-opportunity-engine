@@ -5,3 +5,5 @@ Proposal packs are deterministic, evidence-backed operator work products. They r
 Packs contain neutral scope, deliverables, assumptions, exclusions, client questions, timeline and pricing placeholders. They are not contracts, quotes, legal advice, invoices, or messages. Human review is required before export; export writes local Markdown/JSON/CSV artifacts only.
 
 Endpoints: `POST /v1/businesses/{id}/proposal`, list/detail, review, export, and export history. No delivery provider is called.
+
+Run `python scripts/smoke_proposals.py --base-url http://127.0.0.1:8000` after applying migrations. The script uses synthetic data and verifies review, export files, and safety exclusions.

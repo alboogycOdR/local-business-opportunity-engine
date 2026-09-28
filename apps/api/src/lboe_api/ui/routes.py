@@ -21,6 +21,9 @@ from lboe_api.db import (
     Business,
     BusinessBrief,
     Campaign,
+    DeliveryChecklistItem,
+    DeliveryMilestone,
+    DeliveryProject,
     DemoArtifact,
     DemoPreviewAccessEvent,
     DemoPreviewLink,
@@ -1365,3 +1368,54 @@ def proposal_ready_queue(db: Session = Depends(session)) -> HTMLResponse:
     return HTMLResponse(
         f"<html><body><h1>Proposal-ready queue</h1><ul>{rows or '<li>Queue empty.</li>'}</ul></body></html>"
     )
+
+
+@router.get("/ui/businesses/{business_id}/delivery", response_class=HTMLResponse)
+def delivery_for_business(business_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+    business = db.get(Business, business_id)
+    if business is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    projects = db.scalars(
+        select(DeliveryProject)
+        .where(DeliveryProject.business_id == business_id)
+        .order_by(DeliveryProject.created_at.desc())
+    ).all()
+    rows = "".join(
+        f'<li><a href="/ui/delivery-projects/{p.id}">{html.escape(p.title)}</a> — {html.escape(p.status)}</li>'
+        for p in projects
+    )
+    return HTMLResponse(
+        f"<html><body><h1>Delivery: {html.escape(business.display_name)}</h1><p>LBOE does not store credentials. Use an approved password manager. Approval records are operator assertions, not e-signatures.</p><ul>{rows or '<li>No delivery projects.</li>'}</ul></body></html>"
+    )
+
+
+@router.get("/ui/delivery-projects/{project_id}", response_class=HTMLResponse)
+def delivery_detail(project_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+    project = db.get(DeliveryProject, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="delivery_project_not_found")
+    items = db.scalars(
+        select(DeliveryChecklistItem).where(DeliveryChecklistItem.delivery_project_id == project.id)
+    ).all()
+    milestones = db.scalars(select(DeliveryMilestone).where(DeliveryMilestone.delivery_project_id == project.id)).all()
+    checks = "".join(
+        f"<li>{html.escape(i.category)} / {html.escape(i.code)}: {html.escape(i.status)}</li>" for i in items
+    )
+    marks = "".join(f"<li>{html.escape(m.milestone_type)}: {html.escape(m.status)}</li>" for m in milestones)
+    return HTMLResponse(
+        f"<html><body><h1>{html.escape(project.title)}</h1><p>Status: {html.escape(project.status)}</p><p>Safety: no credentials, payments, contracts, or automated deployment are stored here.</p><h2>Checklist</h2><ul>{checks}</ul><h2>Milestones</h2><ul>{marks}</ul></body></html>"
+    )
+
+
+@router.get("/ui/queues/delivery", response_class=HTMLResponse)
+def delivery_queue(db: Session = Depends(session)) -> HTMLResponse:
+    projects = db.scalars(
+        select(DeliveryProject)
+        .where(DeliveryProject.status.not_in(["closed", "cancelled", "delivered"]))
+        .order_by(DeliveryProject.created_at)
+    ).all()
+    rows = "".join(
+        f'<li><a href="/ui/delivery-projects/{p.id}">{html.escape(p.title)}</a> — {html.escape(p.status)}</li>'
+        for p in projects
+    )
+    return HTMLResponse(f"<html><body><h1>Delivery queue</h1><ul>{rows or '<li>Queue empty.</li>'}</ul></body></html>")

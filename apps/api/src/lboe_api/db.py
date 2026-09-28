@@ -663,6 +663,65 @@ class ProposalExport(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class DeliveryProject(Base):
+    __tablename__ = "delivery_projects"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    proposal_package_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("proposal_packages.id"), nullable=True)
+    campaign_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("campaigns.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="draft", index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    summary: Mapped[str] = mapped_column(Text, default="")
+    created_by_operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DeliveryChecklistItem(Base):
+    __tablename__ = "delivery_checklist_items"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    delivery_project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("delivery_projects.id"), index=True)
+    category: Mapped[str] = mapped_column(String(30))
+    code: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(30), default="pending")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class DeliveryMilestone(Base):
+    __tablename__ = "delivery_milestones"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    delivery_project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("delivery_projects.id"), index=True)
+    milestone_type: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(30))
+    operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DeliveryApproval(Base):
+    __tablename__ = "delivery_approvals"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    delivery_project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("delivery_projects.id"), index=True)
+    approval_type: Mapped[str] = mapped_column(String(80))
+    approved_item: Mapped[str] = mapped_column(Text)
+    operator_notes: Mapped[str] = mapped_column(Text, default="")
+    client_assertion: Mapped[str] = mapped_column(Text, default="")
+    artifact_reference: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DeliveryExport(Base):
+    __tablename__ = "delivery_exports"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    delivery_project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("delivery_projects.id"), index=True)
+    status: Mapped[str] = mapped_column(String(30))
+    files: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Operator(Base):
     __tablename__ = "operators"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
