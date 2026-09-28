@@ -567,8 +567,32 @@ class LeadCrmEvent(Base):
     summary: Mapped[str] = mapped_column(Text, default="")
     notes: Mapped[str] = mapped_column(Text, default="")
     next_step: Mapped[str | None] = mapped_column(Text, nullable=True)
+    classification: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    objection_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
     evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
     resulting_business_state: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ManualFollowUpTask(Base):
+    __tablename__ = "manual_follow_up_tasks"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+    reason: Mapped[str] = mapped_column(Text)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(30), default="open")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class OutreachObjection(Base):
+    __tablename__ = "outreach_objections"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    operator: Mapped[str] = mapped_column(String(200))
+    code: Mapped[str] = mapped_column(String(40))
+    notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

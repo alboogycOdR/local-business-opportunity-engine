@@ -28,6 +28,7 @@ from lboe_api.db import (
     EnrichmentRun,
     GeneratedDemo,
     LeadCrmEvent,
+    ManualFollowUpTask,
     Operator,
     OperatorAssignment,
     OperatorAuditEvent,
@@ -35,13 +36,16 @@ from lboe_api.db import (
     OpportunityComponent,
     OpportunityHold,
     OpportunityScore,
+    OutreachDraftMessage,
     OutreachDraftPackage,
+    OutreachObjection,
     PilotExportRun,
     PilotRetrospective,
     PilotRun,
     PilotSourcePolicyAcknowledgement,
     SuppressionEntry,
 )
+from lboe_api.demo_generator import qa_explanations
 from lboe_api.main import SessionLocal, settings
 from lboe_api.pilot_service import (
     POLICY_VERSION,
@@ -290,6 +294,67 @@ def business_detail(business_id: uuid.UUID, db: Session = Depends(session)) -> H
         + f"<p class='badge'>{esc(business.state)}</p><section><h2>Identity</h2><p>{esc(business.display_name)} · {esc(business.category)} · {esc(business.locality)}<br>{esc(business.address_text)}</p></section><section><h2>Score / brief</h2><p>Score: {score.score if score else '—'} ({esc(score.band if score else '')})<br>Recommended action: {esc(brief.recommended_next_action if brief else '—')}</p></section><section><h2>Enrichment evidence</h2><ul>{''.join(f'<li>{esc(run.status)} · {esc(run.adapter_version)} · {len(db.scalars(select(EnrichmentFactRow).where(EnrichmentFactRow.enrichment_run_id == run.id)).all())} facts</li>' for run in enrichment_runs) or '<li>No enrichment run</li>'}</ul></section><section><h2>Demo / outreach</h2><p>{esc(package.status if package else 'No outreach draft')}</p><ul>{demo_html}</ul></section><section><h2>CRM events</h2><ul>{event_html}</ul></section><section><h2>Assignments</h2><ul>{''.join(f'<li>{a.operator_id} · {a.status}</li>' for a in assignments) or '<li>None</li>'}</ul><form method='post' action='/ui/businesses/{business_id}/assign'><select name='operator_id'>{operator_options}</select><button>Assign</button></form></section><section><h2>Operator notes</h2><ul>{comment_html}</ul><form method='post' action='/ui/businesses/{business_id}/comment'><textarea name='body' required placeholder='Append an operator note'></textarea><button>Add note</button></form></section><section><h2>Safe actions</h2><p>All workflow actions remain subject to backend lifecycle and suppression gates.</p><form method='post' action='/ui/businesses/{business_id}/suppress'><input name='reason' required placeholder='Suppression reason'><button>Suppress business</button></form></section>"
     )
     return page(business.display_name, body)
+
+
+@router.get("/ui/businesses/{business_id}/outreach-workbench", response_class=HTMLResponse)
+def outreach_workbench(business_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+    business = db.get(Business, business_id)
+    if business is None:
+        raise HTTPException(404, "business_not_found")
+    package = db.scalar(
+        select(OutreachDraftPackage)
+        .where(OutreachDraftPackage.business_id == business_id)
+        .order_by(OutreachDraftPackage.created_at.desc())
+    )
+    messages: list[OutreachDraftMessage] = []
+    if package:
+        messages = list(
+            db.scalars(select(OutreachDraftMessage).where(OutreachDraftMessage.package_id == package.id)).all()
+        )
+    followups = db.scalars(
+        select(ManualFollowUpTask)
+        .where(ManualFollowUpTask.business_id == business_id)
+        .order_by(ManualFollowUpTask.due_at)
+    ).all()
+    objections = db.scalars(
+        select(OutreachObjection)
+        .where(OutreachObjection.business_id == business_id)
+        .order_by(OutreachObjection.created_at.desc())
+    ).all()
+    drafts = (
+        "".join(
+            f"<article><h3>{esc(item.channel)}</h3><p>{esc(item.subject or '')}</p><pre>{esc(item.body)}</pre><button type='button' onclick='navigator.clipboard.writeText(this.previousElementSibling.textContent)'>Copy draft</button></article>"
+            for item in messages
+        )
+        or "<p>No draft package.</p>"
+    )
+    followup_html = (
+        "".join(f"<li>{esc(item.due_at)} · {esc(item.reason)} · {esc(item.status)}</li>" for item in followups)
+        or "<li>None</li>"
+    )
+    objection_html = "".join(f"<li>{esc(item.code)} · {esc(item.notes)}</li>" for item in objections) or "<li>None</li>"
+    return page(
+        "Manual outreach workbench",
+        f"<div class='safety'>COPY ONLY — LBOE never sends messages. Perform any contact outside LBOE and record it manually.</div><p>{esc(business.display_name)} · state {esc(business.state)}</p><h2>Drafts</h2>{drafts}<h2>Follow-up list</h2><ul>{followup_html}</ul><h2>Objections</h2><ul>{objection_html}</ul><p>Use the API to add follow-up tasks and operator-entered objection or reply classifications.</p>",
+    )
+
+
+@router.get("/ui/queues/follow-up", response_class=HTMLResponse)
+def follow_up_queue(db: Session = Depends(session)) -> HTMLResponse:
+    tasks = db.scalars(
+        select(ManualFollowUpTask).where(ManualFollowUpTask.status == "open").order_by(ManualFollowUpTask.due_at)
+    ).all()
+    rows = (
+        "".join(
+            f"<tr><td><a href='/ui/businesses/{item.business_id}/outreach-workbench'>{item.business_id}</a></td><td>{esc(item.due_at)}</td><td>{esc(item.reason)}</td></tr>"
+            for item in tasks
+        )
+        or "<tr><td colspan='3'>No open follow-ups</td></tr>"
+    )
+    return page(
+        "Follow-up queue",
+        f"<p>Local operator list only. No reminders or messages are sent.</p><table><tr><th>Business</th><th>Due</th><th>Reason</th></tr>{rows}</table>",
+    )
 
 
 @router.post("/ui/businesses/{business_id}/assign")
@@ -658,6 +723,26 @@ def audit_artifact(artifact_id: uuid.UUID, db: Session = Depends(session)) -> Re
     if artifact.mime_type.startswith("image/"):
         return Response(path.read_bytes(), media_type=artifact.mime_type)
     return HTMLResponse(path.read_text(encoding="utf-8"))
+
+
+@router.get("/ui/demos/{demo_id}/qa", response_class=HTMLResponse)
+def demo_qa_detail(demo_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+    demo = db.get(GeneratedDemo, demo_id)
+    if demo is None:
+        raise HTTPException(404, "demo_not_found")
+    qa = db.scalar(select(DemoQaRun).where(DemoQaRun.demo_id == demo_id).order_by(DemoQaRun.created_at.desc()))
+    details = qa_explanations(qa.checks) if qa else []
+    rows = (
+        "".join(
+            f"<tr><td>{esc(item['code'])}</td><td>{'pass' if item['passed'] else 'FAIL'}</td><td>{esc(item['severity'])}</td><td>{esc(item['explanation'])}</td><td>{esc(item['recommended_action'])}</td></tr>"
+            for item in details
+        )
+        or "<tr><td colspan='5'>No QA run</td></tr>"
+    )
+    return page(
+        "Demo QA",
+        f"<p>Status: <strong>{esc(demo.status)}</strong>. Failed checks block sharing.</p><table><tr><th>Check</th><th>Result</th><th>Severity</th><th>Explanation</th><th>Action</th></tr>{rows}</table>",
+    )
 
 
 @router.get("/ui/demos/{demo_id}/preview-links", response_class=HTMLResponse)

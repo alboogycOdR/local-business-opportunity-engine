@@ -68,6 +68,7 @@ from .db import (
     GeneratedDemoSection,
     Job,
     LeadCrmEvent,
+    ManualFollowUpTask,
     OpportunityComponent,
     OpportunityHold,
     OpportunityScore,
@@ -76,6 +77,7 @@ from .db import (
     OutreachDraftMessage,
     OutreachDraftPackage,
     OutreachExecutionRecord,
+    OutreachObjection,
     OutreachReadinessCheck,
     OutreachReadinessReview,
     PipelineEvent,
@@ -85,7 +87,7 @@ from .db import (
     make_engine,
 )
 from .demo_generator import VERSION as DEMO_VERSION
-from .demo_generator import qa_demo, render_demo, write_artifacts
+from .demo_generator import qa_demo, qa_explanations, render_demo, write_artifacts
 from .discovery_service import discovery_idempotency_key, execute_discovery
 from .enrichment_service import enrichment_idempotency_key, execute_enrichment
 from .logging import configure_logging
@@ -849,7 +851,14 @@ def demo_dict(demo: GeneratedDemo, session: Session) -> dict[str, Any]:
         "artifacts": [
             {"kind": x.kind, "path": x.path, "mime_type": x.mime_type, "byte_size": x.byte_size} for x in artifacts
         ],
-        "qa": {"status": qa.status, "checks": qa.checks, "created_at": qa.created_at} if qa else None,
+        "qa": {
+            "status": qa.status,
+            "checks": qa.checks,
+            "explanations": qa_explanations(qa.checks),
+            "created_at": qa.created_at,
+        }
+        if qa
+        else None,
         "reviews": review_rows,
         "safe_next_actions": next_actions.get(demo.status, []),
     }
@@ -1019,6 +1028,71 @@ def get_demo(demo_id: uuid.UUID, session: Session = Depends(db_session)) -> dict
     if demo is None:
         raise HTTPException(status_code=404, detail="demo_not_found")
     return demo_dict(demo, session)
+
+
+class DemoRegenerateRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+
+@app.post("/v1/demos/{demo_id}/regenerate")
+def regenerate_demo(
+    demo_id: uuid.UUID, request: DemoRegenerateRequest, session: Session = Depends(db_session)
+) -> dict[str, Any]:
+    source = session.get(GeneratedDemo, demo_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="demo_not_found")
+    if source.status not in {"qa_failed", "changes_requested", "regeneration_requested", "manual_edit_required"}:
+        raise HTTPException(status_code=409, detail={"error": "demo_not_regenerable", "status": source.status})
+    business = session.get(Business, source.business_id)
+    brief = session.get(BusinessBrief, source.brief_id)
+    if business is None or brief is None:
+        raise HTTPException(status_code=409, detail="demo_source_missing")
+    rendered = render_demo(source.id, business, brief_dict(brief, session), source.demo_type)
+    new_demo = GeneratedDemo(
+        business_id=source.business_id,
+        brief_id=source.brief_id,
+        score_id=source.score_id,
+        audit_run_id=source.audit_run_id,
+        version=DEMO_VERSION,
+        demo_type=source.demo_type,
+        status="rendering",
+        preview_path="",
+    )
+    session.add(new_demo)
+    session.flush()
+    artifact_root = __import__("pathlib").Path(settings.demo_artifact_root)
+    artifacts = write_artifacts(artifact_root, new_demo.id, rendered)
+    status, checks = qa_demo(artifact_root, new_demo.id, rendered)
+    new_demo.status = "qa_passed" if status == "passed" else "qa_failed"
+    new_demo.preview_path = str(artifact_root / "demos" / str(new_demo.id) / "index.html")
+    for section in rendered.sections:
+        session.add(
+            GeneratedDemoSection(
+                demo_id=new_demo.id,
+                section_type=section.section_type,
+                heading=section.heading,
+                body=section.body,
+                sort_order=section.sort_order,
+                evidence=section.evidence,
+            )
+        )
+    for claim in rendered.claims:
+        session.add(
+            GeneratedDemoClaim(
+                demo_id=new_demo.id,
+                claim_text=claim.claim_text,
+                claim_type=claim.claim_type,
+                evidence=claim.evidence,
+                confidence=claim.confidence,
+                approved=claim.approved,
+            )
+        )
+    for item in artifacts:
+        session.add(DemoArtifact(demo_id=new_demo.id, **item))
+    session.add(DemoQaRun(demo_id=new_demo.id, status=status, checks=checks))
+    session.commit()
+    session.refresh(new_demo)
+    return demo_dict(new_demo, session)
 
 
 @app.post("/v1/demos/{demo_id}/review")
@@ -1758,6 +1832,8 @@ def crm_event_dict(event: LeadCrmEvent) -> dict[str, Any]:
         "summary": event.summary,
         "notes": event.notes,
         "next_step": event.next_step,
+        "classification": event.classification,
+        "objection_code": event.objection_code,
         "evidence": event.evidence,
         "resulting_business_state": event.resulting_business_state,
         "created_at": event.created_at,
@@ -1854,6 +1930,8 @@ def create_crm_event(
         summary=request.summary,
         notes=request.notes,
         next_step=request.next_step,
+        classification=request.classification,
+        objection_code=request.objection_code,
         evidence={**request.evidence, "operator_entered": True, "external_sync_performed": False},
         resulting_business_state=(target or current).value,
     )
@@ -1874,6 +1952,100 @@ def create_crm_event(
     job.payload = {"business_id": str(business_id), "crm_event_id": str(event.id), "external_sync_performed": False}
     session.commit()
     return crm_event_dict(event)
+
+
+class FollowUpRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+    due_at: datetime
+    operator_id: uuid.UUID | None = None
+
+
+class ObjectionRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=40)
+    operator: str = Field(min_length=1, max_length=200)
+    notes: str = ""
+
+
+@app.post("/v1/businesses/{business_id}/follow-ups")
+def create_follow_up(
+    business_id: uuid.UUID, request: FollowUpRequest, session: Session = Depends(db_session)
+) -> dict[str, Any]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    task = ManualFollowUpTask(
+        business_id=business_id, reason=request.reason, due_at=request.due_at, operator_id=request.operator_id
+    )
+    session.add(task)
+    session.commit()
+    session.refresh(task)
+    return {
+        "id": str(task.id),
+        "business_id": str(task.business_id),
+        "reason": task.reason,
+        "due_at": task.due_at,
+        "status": task.status,
+        "sending_performed": False,
+    }
+
+
+@app.get("/v1/businesses/{business_id}/follow-ups")
+def list_follow_ups(business_id: uuid.UUID, session: Session = Depends(db_session)) -> list[dict[str, Any]]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    return [
+        {
+            "id": str(item.id),
+            "business_id": str(item.business_id),
+            "reason": item.reason,
+            "due_at": item.due_at,
+            "status": item.status,
+            "completed_at": item.completed_at,
+        }
+        for item in session.scalars(
+            select(ManualFollowUpTask)
+            .where(ManualFollowUpTask.business_id == business_id)
+            .order_by(ManualFollowUpTask.due_at)
+        ).all()
+    ]
+
+
+@app.post("/v1/businesses/{business_id}/objections")
+def create_objection(
+    business_id: uuid.UUID, request: ObjectionRequest, session: Session = Depends(db_session)
+) -> dict[str, Any]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    item = OutreachObjection(business_id=business_id, code=request.code, operator=request.operator, notes=request.notes)
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return {
+        "id": str(item.id),
+        "business_id": str(item.business_id),
+        "code": item.code,
+        "operator": item.operator,
+        "notes": item.notes,
+    }
+
+
+@app.get("/v1/businesses/{business_id}/objections")
+def list_objections(business_id: uuid.UUID, session: Session = Depends(db_session)) -> list[dict[str, Any]]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    return [
+        {
+            "id": str(item.id),
+            "code": item.code,
+            "operator": item.operator,
+            "notes": item.notes,
+            "created_at": item.created_at,
+        }
+        for item in session.scalars(
+            select(OutreachObjection)
+            .where(OutreachObjection.business_id == business_id)
+            .order_by(OutreachObjection.created_at)
+        ).all()
+    ]
 
 
 @app.get("/v1/businesses/{business_id}/crm-events")

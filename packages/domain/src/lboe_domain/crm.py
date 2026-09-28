@@ -30,6 +30,8 @@ class LeadResponseLogRequest(BaseModel):
     notes: str = ""
     next_step: str | None = None
     evidence: dict[str, Any] = Field(default_factory=dict)
+    classification: str | None = None
+    objection_code: str | None = None
     idempotency_key: str | None = Field(default=None, max_length=200)
 
 

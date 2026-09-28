@@ -25,6 +25,25 @@ PROHIBITED = (
     "special offer",
 )
 
+QA_GUIDANCE = {
+    "concept_banner_present": ("critical", "Restore the independent concept disclaimer.", "regenerate"),
+    "business_name_present": ("critical", "Verify the business name against the brief.", "manual_edit"),
+    "prohibited_phrases_absent": ("critical", "Remove unsupported or deceptive marketing language.", "manual_edit"),
+    "official_site_claim_absent": ("critical", "Remove any implication that this is the official site.", "manual_edit"),
+    "no_fake_testimonials": ("critical", "Remove testimonials or review-like claims.", "manual_edit"),
+    "no_fake_prices": ("critical", "Remove prices unless explicitly verified.", "manual_edit"),
+    "claims_have_evidence": (
+        "high",
+        "Map each verified claim to stored evidence or mark it generic/placeholder.",
+        "manual_edit",
+    ),
+    "html_exists": ("critical", "Regenerate missing HTML artifacts.", "regenerate"),
+    "css_exists": ("high", "Regenerate missing CSS artifact.", "regenerate"),
+    "metadata_exists": ("medium", "Regenerate missing metadata artifact.", "regenerate"),
+    "no_external_forms": ("critical", "Remove external submission forms; use safe placeholders.", "manual_edit"),
+    "no_external_tracking": ("critical", "Remove scripts and tracking from the concept preview.", "manual_edit"),
+}
+
 
 @dataclass(frozen=True)
 class RenderedDemo:
@@ -197,3 +216,17 @@ def qa_demo(root: Path, demo_id: uuid.UUID, rendered: RenderedDemo) -> tuple[str
         "no_external_tracking": "<script" not in lowered,
     }
     return ("passed" if all(checks.values()) else "failed", checks)
+
+
+def qa_explanations(checks: dict[str, bool]) -> list[dict[str, str | bool]]:
+    return [
+        {
+            "code": code,
+            "passed": passed,
+            "severity": QA_GUIDANCE.get(code, ("medium", "Inspect this QA check.", "manual_edit"))[0],
+            "explanation": QA_GUIDANCE.get(code, ("medium", "Inspect this QA check.", "manual_edit"))[1],
+            "recommended_action": QA_GUIDANCE.get(code, ("medium", "Inspect this QA check.", "manual_edit"))[2],
+            "sharing_blocked": not passed,
+        }
+        for code, passed in checks.items()
+    ]
