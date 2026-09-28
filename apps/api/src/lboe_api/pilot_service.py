@@ -192,12 +192,22 @@ def generate_export(db: Session, pilot: PilotRun, settings: Settings, operator_i
         w.writerow(["business_id", "name", "category", "locality", "state"])
         w.writerows([[b.id, b.display_name, b.category, b.locality, b.state] for b in businesses])
     files["leads.csv"] = str(out / "leads.csv")
-    for name, header in (
-        ("demo-links.csv", ["business_id", "demo_id", "status", "expires_at"]),
-        ("operator-activity.csv", ["entity_type", "action", "created_at"]),
-    ):
-        (out / name).write_text(",".join(header) + "\n", encoding="utf-8")
-        files[name] = str(out / name)
+    with (out / "demo-links.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["business_id", "demo_id", "status", "expires_at"])
+        links = db.scalars(select(DemoPreviewLink).where(DemoPreviewLink.business_id.in_(ids))).all() if ids else []
+        writer.writerows([[link.business_id, link.demo_id, link.status, link.expires_at] for link in links])
+    files["demo-links.csv"] = str(out / "demo-links.csv")
+    with (out / "operator-activity.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["entity_type", "action", "created_at"])
+        events = db.scalars(
+            select(OperatorAuditEvent).where(
+                OperatorAuditEvent.entity_type == "pilot", OperatorAuditEvent.entity_id == pilot.id
+            )
+        ).all()
+        writer.writerows([[event.entity_type, event.action, event.created_at] for event in events])
+    files["operator-activity.csv"] = str(out / "operator-activity.csv")
     run = PilotExportRun(
         pilot_id=pilot.id,
         status="completed",

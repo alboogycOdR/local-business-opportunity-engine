@@ -46,6 +46,10 @@ from lboe_api.db import (  # noqa: E402
     OutreachExecutionRecord,
     OutreachReadinessCheck,
     OutreachReadinessReview,
+    PilotExportRun,
+    PilotRetrospective,
+    PilotRun,
+    PilotSourcePolicyAcknowledgement,
     PipelineEvent,
     SourceObservation,
     SuppressionEntry,
@@ -97,6 +101,21 @@ def reset_synthetic(session) -> int:
     ).all()
     readiness_ids = [item.id for item in readiness]
     ordered = [
+        (
+            PilotExportRun,
+            PilotExportRun.pilot_id.in_(select(PilotRun.id).where(PilotRun.campaign_id.in_(campaign_ids))),
+        ),
+        (
+            PilotRetrospective,
+            PilotRetrospective.pilot_id.in_(select(PilotRun.id).where(PilotRun.campaign_id.in_(campaign_ids))),
+        ),
+        (
+            PilotSourcePolicyAcknowledgement,
+            PilotSourcePolicyAcknowledgement.pilot_id.in_(
+                select(PilotRun.id).where(PilotRun.campaign_id.in_(campaign_ids))
+            ),
+        ),
+        (PilotRun, PilotRun.campaign_id.in_(campaign_ids)),
         (LeadCrmEvent, LeadCrmEvent.business_id.in_(business_ids)),
         (OutreachExecutionRecord, OutreachExecutionRecord.business_id.in_(business_ids)),
         (OutreachChannelApproval, OutreachChannelApproval.outreach_readiness_review_id.in_(readiness_ids)),
