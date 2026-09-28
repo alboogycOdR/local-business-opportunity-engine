@@ -6,6 +6,7 @@ import hmac
 import html
 import secrets
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -133,7 +134,7 @@ def esc(value: Any) -> str:
 
 def page(title: str, body: str) -> HTMLResponse:
     return HTMLResponse(
-        f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{esc(title)} · LBOE</title><link rel='stylesheet' href='/ui/static/ui.css'></head><body><header><a href='/ui'><strong>LBOE Operator Cockpit</strong></a><nav><a href='/ui/campaigns'>Campaigns</a><a href='/ui/pilots'>Pilots</a><a href='/ui/queues'>Queues</a><a href='/ui/reports/pilot'>Reports</a><a href='/ui/operators'>Admin</a><a href='/ui/system'>System</a></nav></header><div class='safety'>System delivery is disabled. LBOE does not send email, WhatsApp, SMS, or CRM messages.</div><main><p class='muted'><a href='/ui'>Dashboard</a> / {esc(title)}</p><h1>{esc(title)}</h1>{body}</main></body></html>"""
+        f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{esc(title)} · LBOE</title><link rel='stylesheet' href='/ui/static/ui.css'></head><body><header><a href='/ui'><strong>LBOE Operator Cockpit</strong></a><nav><a href='/ui/campaigns'>Campaigns</a><a href='/ui/queues'>Queues</a><a href='/ui/queues/proposal-ready'>Proposals</a><a href='/ui/queues/delivery'>Delivery</a><a href='/ui/pilots'>Pilots</a><a href='/ui/reports/pilot'>Reports</a><a href='/ui/operators'>Admin</a><a href='/ui/system'>System</a></nav></header><div class='safety'>System delivery is disabled. LBOE does not send email, WhatsApp, SMS, or CRM messages.</div><main><p class='muted'><a href='/ui'>Dashboard</a> / {esc(title)}</p><h1>{esc(title)}</h1>{body}</main></body></html>"""
     )
 
 
@@ -161,13 +162,41 @@ def metric_cards(report: dict[str, Any]) -> str:
     )
 
 
+def map_panel(campaign: Any, businesses: Sequence[Business]) -> str:
+    """Render a lightweight geographic canvas without requiring a map API key."""
+    markers = []
+    for index, business in enumerate(businesses[:40]):
+        left = 12 + ((index * 37) % 78)
+        top = 18 + ((index * 53) % 64)
+        markers.append(
+            f"<a class='map-marker' style='left:{left}%;top:{top}%' title='{esc(business.display_name)}' href='/ui/businesses/{business.id}' aria-label='Open {esc(business.display_name)}'></a>"
+        )
+    geography = esc(getattr(campaign, "geography", None) or "Campaign area")
+    query = (getattr(campaign, "geography", None) or "") + " " + (getattr(campaign, "vertical", None) or "")
+    maps_url = "https://www.google.com/maps/search/?api=1&query=" + __import__(
+        "urllib.parse", fromlist=["quote_plus"]
+    ).quote_plus(query)
+    marker_html = (
+        "".join(markers)
+        or "<div class='empty-state' style='position:absolute;inset:35px;z-index:2'>Run discovery to place businesses on this map.</div>"
+    )
+    return f"<div class='map-shell'><div class='map-label'>Live campaign area - {geography}</div>{marker_html}<div class='map-legend'><strong>{len(businesses)}</strong> businesses - approximate operator view - <a href='{maps_url}' target='_blank' rel='noreferrer'>Open Google Maps</a></div></div>"
+
+
 @router.get("/ui", response_class=HTMLResponse)
 def dashboard(db: Session = Depends(session)) -> HTMLResponse:
     report = build_pilot_report(db)
     quality = {item["code"]: item["count"] for item in report["quality_metrics"]}
+    campaign = db.scalar(select(Campaign).order_by(Campaign.created_at.desc()))
+    campaign_businesses = (
+        db.scalars(select(Business).where(Business.campaign_id == campaign.id).order_by(Business.display_name)).all()
+        if campaign
+        else []
+    )
     body = (
-        metric_cards(report)
-        + f"<p class='notice'>System delivery count: <strong>{quality.get('system_delivery_count', 0)}</strong></p><p><a class='button' href='/ui/campaigns'>Open campaigns</a> <a class='button' href='/ui/queues'>Open queues</a></p>"
+        "<div class='hero'><div class='hero-copy'><div class='eyebrow'>Field operations console</div><h1>Turn a map of businesses into your next best action.</h1><p>Start with a campaign, scan the geography, then move each lead through evidence, score, demo, proposal, and delivery.</p></div><div class='hero-actions'><a class='button button-primary' href='/ui/campaigns'>Open campaigns</a><a class='button button-secondary' href='/ui/queues'>View queues</a></div></div>"
+        + metric_cards(report)
+        + f"<div class='layout-grid'><section class='section'><div class='section-head'><div><div class='eyebrow'>Geographic view</div><h2>{esc(campaign.name) if campaign else 'Your campaign map'}</h2></div><a class='button button-secondary' href='/ui/campaigns'>Manage campaigns</a></div>{map_panel(campaign, campaign_businesses) if campaign else map_panel(type('CampaignView', (), {'geography': 'Choose a geography', 'vertical': 'local business'})(), [])}</section><section class='section'><div class='eyebrow'>Today</div><h2>What needs attention</h2><div class='stat-line'><span>System delivery</span><strong>{quality.get('system_delivery_count', 0)}</strong></div><div class='stat-line'><span>Failed / blocked jobs</span><strong>{quality.get('jobs_failed', quality.get('jobs_failed_or_not_eligible', 0))}</strong></div><div class='stat-line'><span>Approved demos</span><strong>{quality.get('approved_demos', 0)}</strong></div><div class='stat-line'><span>Proposal-ready</span><strong>{quality.get('proposal_ready_queue_count', 0)}</strong></div><p class='muted'>Every action is operator-controlled. LBOE never sends messages.</p></section></div>"
     )
     return page("Pilot dashboard", body)
 
@@ -263,8 +292,12 @@ def campaign_detail(
         + "".join(rows)
         + "</table>"
     )
+    intro = f"<div class='hero'><div class='hero-copy'><div class='eyebrow'>Campaign workspace</div><h1>{esc(campaign.name)}</h1><p>{esc(campaign.vertical)} in {esc(campaign.geography or 'your target geography')}. Select a marker or a lead below to continue.</p></div><div class='hero-actions'><a class='button button-primary' href='/ui/queues'>Work the queues</a><a class='button button-secondary' href='https://www.google.com/maps/search/?api=1&query={__import__('urllib.parse', fromlist=['quote_plus']).quote_plus((campaign.geography or '') + ' ' + campaign.vertical)}' target='_blank' rel='noreferrer'>Open Google Maps</a></div></div>"
     return page(
-        f"Campaign · {campaign.name}", f"<p>{esc(campaign.vertical)} · {esc(campaign.geography)}</p>{filters}{table}"
+        f"Campaign · {campaign.name}",
+        intro
+        + map_panel(campaign, businesses)
+        + f"<section class='section'><div class='section-head'><h2>Lead list</h2><span class='badge'>{len(rows)} shown</span></div>{filters}{table}</section>",
     )
 
 
