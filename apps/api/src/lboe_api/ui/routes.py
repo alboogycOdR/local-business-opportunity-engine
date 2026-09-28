@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -591,7 +592,12 @@ def business_detail(
     if pilot is not None:
         pilot_banner = f"<div class='safety'>{'DRY RUN MODE — manual outreach and CRM outcome logging are blocked by the operator console.' if pilot.mode == 'dry_run' else 'ACTIVE PILOT MODE — manual records represent operator activity; LBOE still sends nothing.'} <a href='/ui/pilots/{pilot.id}'>View pilot</a></div>"
     next_action_button = ""
-    if raw_action in {"conversion_upgrade_offer", "technical_cleanup_offer", "generate_demo"}:
+    # A demo is generated from a persisted Business Brief. Keep the UI honest
+    # about that prerequisite instead of showing a demo action that can only
+    # return ``brief_required`` from the API.
+    if brief is None:
+        next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='brief'><button class='button-primary'>Prepare business brief</button></form>"
+    elif raw_action in {"conversion_upgrade_offer", "technical_cleanup_offer", "generate_demo"}:
         action_value = "generate_demo"
         action_label = "Generate concept preview"
         if raw_action == "conversion_upgrade_offer":
@@ -601,8 +607,6 @@ def business_detail(
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='{action_value}'><button class='button-primary'>{action_label}</button></form>"
     elif score is None:
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='score'><button class='button-primary'>Score this lead</button></form>"
-    elif brief is None:
-        next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='brief'><button class='button-primary'>Prepare business brief</button></form>"
     elif any(demo.status == "approved" for demo in demos) and not proposals:
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='proposal'><button class='button-primary'>Create proposal pack</button></form>"
     body = (
@@ -642,14 +646,21 @@ async def business_action(
         elif action == "brief":
             await create_brief(business_id, {"idempotency_key": "ui"}, db)
         elif action == "generate_demo":
-            create_demo(business_id, {"idempotency_key": "ui"}, db)
+            result = create_demo(business_id, {"idempotency_key": "ui"}, db)
+            if result.get("status") == "not_demo_eligible":
+                reason = str(result.get("reason") or "not_demo_eligible").replace("_", " ")
+                return RedirectResponse(
+                    f"/ui/businesses/{business_id}?action_error={quote_plus(f'Demo not available: {reason}')}",
+                    status_code=303,
+                )
         elif action == "proposal":
             create_proposal(business_id, {"idempotency_key": "ui"}, db)
         else:
             raise HTTPException(422, "unsupported_business_action")
     except HTTPException as exc:
-        return RedirectResponse(f"/ui/businesses/{business_id}?action_error={esc(exc.detail)}", status_code=303)
-    return RedirectResponse(f"/ui/businesses/{business_id}?action_completed={esc(action)}", status_code=303)
+        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        return RedirectResponse(f"/ui/businesses/{business_id}?action_error={quote_plus(detail)}", status_code=303)
+    return RedirectResponse(f"/ui/businesses/{business_id}?action_completed={quote_plus(action)}", status_code=303)
 
 
 @router.get("/ui/businesses/{business_id}/outreach-workbench", response_class=HTMLResponse)
