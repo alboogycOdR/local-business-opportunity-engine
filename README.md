@@ -150,3 +150,7 @@ introduced.
 
 Sprint 17–18 adds calibration visibility, decision-reason queues, and a
 second-batch scale-up pack. It does not change the no-sending boundary.
+
+Sprint 20–21 adds calibration guidance and source-aware homepage enrichment.
+Enrichment is limited to already-known HTTP(S) homepages and stores normalized
+facts with provenance; it does not broad-crawl or send anything.

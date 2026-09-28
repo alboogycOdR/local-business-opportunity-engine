@@ -61,6 +61,8 @@ from .db import (
     DemoReview,
     DemoReviewChecklistItem,
     DiscoveryCandidate,
+    EnrichmentFactRow,
+    EnrichmentRun,
     GeneratedDemo,
     GeneratedDemoClaim,
     GeneratedDemoSection,
@@ -85,6 +87,7 @@ from .db import (
 from .demo_generator import VERSION as DEMO_VERSION
 from .demo_generator import qa_demo, render_demo, write_artifacts
 from .discovery_service import discovery_idempotency_key, execute_discovery
+from .enrichment_service import enrichment_idempotency_key, execute_enrichment
 from .logging import configure_logging
 from .outreach_service import VERSION as OUTREACH_VERSION
 from .outreach_service import build_messages, safety_checks
@@ -184,6 +187,11 @@ class AuditRequestBody(BaseModel):
     website_url: str | None = None
     timeout_seconds: float = Field(default=30, gt=0, le=120)
     max_pages: int = Field(default=2, ge=1, le=3)
+    idempotency_key: str | None = Field(default=None, max_length=300)
+
+
+class EnrichmentRequestBody(BaseModel):
+    website_url: str | None = None
     idempotency_key: str | None = Field(default=None, max_length=300)
 
 
@@ -466,6 +474,90 @@ def get_audit(audit_id: uuid.UUID, session: Session = Depends(db_session)) -> di
     if run is None:
         raise HTTPException(status_code=404, detail="audit_not_found")
     return audit_dict(run, session)
+
+
+def enrichment_dict(run: EnrichmentRun, session: Session) -> dict[str, Any]:
+    facts = session.scalars(select(EnrichmentFactRow).where(EnrichmentFactRow.enrichment_run_id == run.id)).all()
+    return {
+        "id": str(run.id),
+        "business_id": str(run.business_id),
+        "source_type": run.source_type,
+        "status": run.status,
+        "adapter_version": run.adapter_version,
+        "started_at": run.started_at,
+        "completed_at": run.completed_at,
+        "facts": [
+            {
+                "id": str(item.id),
+                "fact_type": item.fact_type,
+                "value": item.value,
+                "source_type": item.source_type,
+                "source_url": item.source_url,
+                "confidence": item.confidence,
+                "observed_at": item.observed_at,
+                "evidence": item.evidence,
+                "policy": item.policy,
+            }
+            for item in facts
+        ],
+    }
+
+
+@app.post("/v1/businesses/{business_id}/enrich")
+async def enrich_business(
+    business_id: uuid.UUID, payload: EnrichmentRequestBody | None = None, session: Session = Depends(db_session)
+) -> dict[str, Any]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    body = payload or EnrichmentRequestBody()
+    from lboe_domain import EnrichmentRequest
+
+    request = EnrichmentRequest(
+        business_id=business_id, website_url=body.website_url, idempotency_key=body.idempotency_key
+    )
+    key = enrichment_idempotency_key(request)
+    existing = session.scalar(select(Job).where(Job.idempotency_key == key))
+    if existing and existing.payload.get("enrichment_run_id"):
+        run = session.get(EnrichmentRun, uuid.UUID(str(existing.payload["enrichment_run_id"])))
+        if run:
+            return enrichment_dict(run, session)
+    job = Job(
+        idempotency_key=key, job_type="ENRICH_BUSINESS", status="running", payload={"business_id": str(business_id)}
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    try:
+        run, _result = await execute_enrichment(session, request)
+    except Exception as exc:  # noqa: BLE001
+        job.status = "failed"
+        job.payload = {"business_id": str(business_id), "error": type(exc).__name__}
+        session.commit()
+        raise HTTPException(status_code=502, detail={"error": "enrichment_failed", "job_id": str(job.id)}) from exc
+    job.status = "succeeded"
+    job.payload = {"business_id": str(business_id), "enrichment_run_id": str(run.id)}
+    session.commit()
+    return enrichment_dict(run, session)
+
+
+@app.get("/v1/businesses/{business_id}/enrichments")
+def list_enrichments(business_id: uuid.UUID, session: Session = Depends(db_session)) -> list[dict[str, Any]]:
+    if session.get(Business, business_id) is None:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    return [
+        enrichment_dict(run, session)
+        for run in session.scalars(
+            select(EnrichmentRun).where(EnrichmentRun.business_id == business_id).order_by(EnrichmentRun.started_at)
+        ).all()
+    ]
+
+
+@app.get("/v1/enrichments/{enrichment_id}")
+def get_enrichment(enrichment_id: uuid.UUID, session: Session = Depends(db_session)) -> dict[str, Any]:
+    run = session.get(EnrichmentRun, enrichment_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="enrichment_not_found")
+    return enrichment_dict(run, session)
 
 
 def score_dict(score: OpportunityScore, session: Session) -> dict[str, Any]:

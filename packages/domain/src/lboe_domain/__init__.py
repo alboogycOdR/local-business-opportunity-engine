@@ -32,6 +32,14 @@ from .discovery import (
     normalize_phone,
     normalize_text,
 )
+from .enrichment import (
+    EnrichmentAdapter,
+    EnrichmentEvidence,
+    EnrichmentFact,
+    EnrichmentRequest,
+    EnrichmentResult,
+    FakeEnrichmentAdapter,
+)
 from .execution import (
     ManualOutreachLogRequest,
     ManualOutreachLogResult,
@@ -133,6 +141,12 @@ __all__ = [
     "ManualOutreachLogResult",
     "OutreachExecutionEvidence",
     "OutreachExecutionRecord",
+    "EnrichmentAdapter",
+    "EnrichmentEvidence",
+    "EnrichmentFact",
+    "EnrichmentRequest",
+    "EnrichmentResult",
+    "FakeEnrichmentAdapter",
     "LeadCrmEvent",
     "LeadCrmOutcome",
     "LeadNextStep",

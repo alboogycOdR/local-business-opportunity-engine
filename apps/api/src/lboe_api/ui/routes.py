@@ -24,6 +24,8 @@ from lboe_api.db import (
     DemoPreviewAccessEvent,
     DemoPreviewLink,
     DemoQaRun,
+    EnrichmentFactRow,
+    EnrichmentRun,
     GeneratedDemo,
     LeadCrmEvent,
     Operator,
@@ -222,6 +224,9 @@ def business_detail(business_id: uuid.UUID, db: Session = Depends(session)) -> H
         .where(OutreachDraftPackage.business_id == business_id)
         .order_by(OutreachDraftPackage.created_at.desc())
     )
+    enrichment_runs = db.scalars(
+        select(EnrichmentRun).where(EnrichmentRun.business_id == business_id).order_by(EnrichmentRun.started_at.desc())
+    ).all()
     events = db.scalars(
         select(LeadCrmEvent).where(LeadCrmEvent.business_id == business_id).order_by(LeadCrmEvent.occurred_at.desc())
     ).all()
@@ -282,7 +287,7 @@ def business_detail(business_id: uuid.UUID, db: Session = Depends(session)) -> H
     body = (
         pilot_banner
         + observability
-        + f"<p class='badge'>{esc(business.state)}</p><section><h2>Identity</h2><p>{esc(business.display_name)} · {esc(business.category)} · {esc(business.locality)}<br>{esc(business.address_text)}</p></section><section><h2>Score / brief</h2><p>Score: {score.score if score else '—'} ({esc(score.band if score else '')})<br>Recommended action: {esc(brief.recommended_next_action if brief else '—')}</p></section><section><h2>Demo / outreach</h2><p>{esc(package.status if package else 'No outreach draft')}</p><ul>{demo_html}</ul></section><section><h2>CRM events</h2><ul>{event_html}</ul></section><section><h2>Assignments</h2><ul>{''.join(f'<li>{a.operator_id} · {a.status}</li>' for a in assignments) or '<li>None</li>'}</ul><form method='post' action='/ui/businesses/{business_id}/assign'><select name='operator_id'>{operator_options}</select><button>Assign</button></form></section><section><h2>Operator notes</h2><ul>{comment_html}</ul><form method='post' action='/ui/businesses/{business_id}/comment'><textarea name='body' required placeholder='Append an operator note'></textarea><button>Add note</button></form></section><section><h2>Safe actions</h2><p>All workflow actions remain subject to backend lifecycle and suppression gates.</p><form method='post' action='/ui/businesses/{business_id}/suppress'><input name='reason' required placeholder='Suppression reason'><button>Suppress business</button></form></section>"
+        + f"<p class='badge'>{esc(business.state)}</p><section><h2>Identity</h2><p>{esc(business.display_name)} · {esc(business.category)} · {esc(business.locality)}<br>{esc(business.address_text)}</p></section><section><h2>Score / brief</h2><p>Score: {score.score if score else '—'} ({esc(score.band if score else '')})<br>Recommended action: {esc(brief.recommended_next_action if brief else '—')}</p></section><section><h2>Enrichment evidence</h2><ul>{''.join(f'<li>{esc(run.status)} · {esc(run.adapter_version)} · {len(db.scalars(select(EnrichmentFactRow).where(EnrichmentFactRow.enrichment_run_id == run.id)).all())} facts</li>' for run in enrichment_runs) or '<li>No enrichment run</li>'}</ul></section><section><h2>Demo / outreach</h2><p>{esc(package.status if package else 'No outreach draft')}</p><ul>{demo_html}</ul></section><section><h2>CRM events</h2><ul>{event_html}</ul></section><section><h2>Assignments</h2><ul>{''.join(f'<li>{a.operator_id} · {a.status}</li>' for a in assignments) or '<li>None</li>'}</ul><form method='post' action='/ui/businesses/{business_id}/assign'><select name='operator_id'>{operator_options}</select><button>Assign</button></form></section><section><h2>Operator notes</h2><ul>{comment_html}</ul><form method='post' action='/ui/businesses/{business_id}/comment'><textarea name='body' required placeholder='Append an operator note'></textarea><button>Add note</button></form></section><section><h2>Safe actions</h2><p>All workflow actions remain subject to backend lifecycle and suppression gates.</p><form method='post' action='/ui/businesses/{business_id}/suppress'><input name='reason' required placeholder='Suppression reason'><button>Suppress business</button></form></section>"
     )
     return page(business.display_name, body)
 
@@ -908,6 +913,21 @@ def pilot_calibration(pilot_id: uuid.UUID, db: Session = Depends(session)) -> HT
     return page(
         "Pilot calibration",
         f"<p>Read-only calibration view for {esc(pilot.name)}. Use evidence to adjust future weights; do not interpret score as business quality.</p><table><tr><th>Signal</th><th>Count</th></tr>{rows}</table><p>QA failures must be reviewed before sharing. No automated sending is available.</p>",
+    )
+
+
+@router.get("/ui/reports/calibration", response_class=HTMLResponse)
+def calibration_report(db: Session = Depends(session)) -> HTMLResponse:
+    report = build_pilot_report(db, include_details=True)
+    quality = {item["code"]: item["count"] for item in report["quality_metrics"]}
+    rows = "".join(
+        f"<tr><td>{esc(key)}</td><td>{esc(value)}</td></tr>"
+        for key, value in sorted(quality.items())
+        if key.startswith(("score_band:", "score_action:", "audit_finding:"))
+    )
+    return page(
+        "Calibration report",
+        f"<p>Deterministic pilot evidence only; score is not business quality.</p><table><tr><th>Signal</th><th>Count</th></tr>{rows}</table><p>Review weak evidence and QA failures before changing weights.</p>",
     )
 
 

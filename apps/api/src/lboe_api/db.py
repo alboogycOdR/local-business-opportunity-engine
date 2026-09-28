@@ -159,6 +159,32 @@ class Contact(Base):
     source_observation_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("source_observations.id"), nullable=True)
 
 
+class EnrichmentRun(Base):
+    __tablename__ = "enrichment_runs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    source_type: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(40))
+    adapter_version: Mapped[str] = mapped_column(String(100))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class EnrichmentFactRow(Base):
+    __tablename__ = "enrichment_facts"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    enrichment_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("enrichment_runs.id"), index=True)
+    business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+    source_type: Mapped[str] = mapped_column(String(80))
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fact_type: Mapped[str] = mapped_column(String(100))
+    value: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Float)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    policy: Mapped[str] = mapped_column(String(40), default="persistent")
+
+
 class SuppressionEntry(Base):
     __tablename__ = "suppression_entries"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
