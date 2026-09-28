@@ -1,0 +1,31 @@
+name: Cape Town Hair Salons Pilot - Batch 2
+vertical: hair_salon
+geography: Cape Town, South Africa
+target_lead_count: 25
+mode: dry_run
+allowed_sources:
+  - manual_import
+  - google_maps_scraper_adapter
+  - public_business_website
+daily_caps:
+  max_businesses: 50
+  daily_demo_cap: 10
+  daily_preview_link_cap: 10
+  daily_manual_contact_cap: 5
+  daily_readiness_approval_cap: 5
+default_preview_expiry_days: 7
+outreach:
+  allowed_channels: [email, phone, whatsapp_manual]
+  automated_sending: false
+source_policy_version: pilot-source-v1
+batch_rules:
+  start_with: 25
+  expand_to_50_only_after_review: true
+  require_operator_review_for_weak_evidence: true
+  require_manager_review_for_qa_failed_regeneration: true
+notes:
+  - Manual outreach only.
+  - Do not increase to 50 until first 25 are reviewed.
+  - No raw scraped data resale.
+  - No copied reviews in demos.
+  - No unsupported claims.
