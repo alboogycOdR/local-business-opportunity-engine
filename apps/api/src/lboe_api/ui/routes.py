@@ -133,7 +133,7 @@ def esc(value: Any) -> str:
 
 def page(title: str, body: str) -> HTMLResponse:
     return HTMLResponse(
-        f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{esc(title)} · LBOE</title><link rel='stylesheet' href='/ui/static/ui.css'></head><body><header><a href='/ui'><strong>LBOE Operator Cockpit</strong></a><nav><a href='/ui/campaigns'>Campaigns</a><a href='/ui/pilots'>Pilots</a><a href='/ui/queues'>Queues</a><a href='/ui/reports/pilot'>Reports</a><a href='/ui/operators'>Operators</a></nav></header><div class='safety'>System delivery is disabled. LBOE does not send email, WhatsApp, SMS, or CRM messages.</div><main><h1>{esc(title)}</h1>{body}</main></body></html>"""
+        f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{esc(title)} · LBOE</title><link rel='stylesheet' href='/ui/static/ui.css'></head><body><header><a href='/ui'><strong>LBOE Operator Cockpit</strong></a><nav><a href='/ui/campaigns'>Campaigns</a><a href='/ui/pilots'>Pilots</a><a href='/ui/queues'>Queues</a><a href='/ui/reports/pilot'>Reports</a><a href='/ui/operators'>Admin</a><a href='/ui/system'>System</a></nav></header><div class='safety'>System delivery is disabled. LBOE does not send email, WhatsApp, SMS, or CRM messages.</div><main><p class='muted'><a href='/ui'>Dashboard</a> / {esc(title)}</p><h1>{esc(title)}</h1>{body}</main></body></html>"""
     )
 
 
@@ -1419,6 +1419,23 @@ def delivery_queue(db: Session = Depends(session)) -> HTMLResponse:
         for p in projects
     )
     return HTMLResponse(f"<html><body><h1>Delivery queue</h1><ul>{rows or '<li>Queue empty.</li>'}</ul></body></html>")
+
+
+@router.get("/ui/system", response_class=HTMLResponse)
+def system_page(db: Session = Depends(session)) -> HTMLResponse:
+    from lboe_api.main import system_status
+
+    status = system_status(db)
+    storage = status["storage"]
+    auth = status["auth"]
+    safety = status["safety"]
+    body = (
+        f"<section><h2>Connectivity</h2><p>Database: <span class='badge'>{esc(status['database'])}</span> · Migration: {esc(status['migration']['current'] or 'unknown')} / expected {esc(status['migration']['expected'])}</p></section>"
+        f"<section><h2>Configuration</h2><p>Environment: {esc(status['environment'])}<br>Storage backend: {esc(storage['backend'])}<br>Artifact root writable: {esc(storage['artifact_root_writable'])}<br>Export root writable: {esc(storage['export_root_writable'])}<br>Auth enabled: {esc(auth['enabled'])}<br>Secure cookies: {esc(auth['secure_cookies'])}</p></section>"
+        f"<section><h2>Operations</h2><p>Failed/not-eligible jobs: {status['failed_or_not_eligible_jobs']}<br>Preview links: {status['preview_link_count']}<br>System delivery count: <strong>{status['system_delivery_count']}</strong></p></section>"
+        f"<section><h2>Safety</h2><p>Sending: {esc(safety['sending_enabled'])}<br>Inbox sync: {esc(safety['inbox_sync_enabled'])}<br>CRM sync: {esc(safety['crm_sync_enabled'])}<br>Credentials stored: {esc(safety['credentials_stored'])}</p></section>"
+    )
+    return page("System status", body)
 
 
 @router.post("/ui/businesses/{business_id}/delivery")

@@ -67,6 +67,7 @@ from .db import (
     DeliveryMilestone,
     DeliveryProject,
     DemoArtifact,
+    DemoPreviewLink,
     DemoQaRun,
     DemoReview,
     DemoReviewChecklistItem,
@@ -287,6 +288,53 @@ def ready() -> dict[str, Any]:
     if not all(value == "ok" for value in checks.values()):
         raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
     return {"status": "ready", "checks": checks}
+
+
+@app.get("/v1/system/status")
+def system_status(session: Session = Depends(db_session)) -> dict[str, Any]:
+    """Safe operational status; never returns credential values."""
+
+    def writable(path: str) -> bool:
+        try:
+            target = Path(path)
+            target.mkdir(parents=True, exist_ok=True)
+            probe = target / ".lboe-write-check"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+            return True
+        except OSError:
+            return False
+
+    try:
+        migration_rows = session.execute(
+            text("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1")
+        ).all()
+        current_migration = migration_rows[0][0] if migration_rows else None
+    except Exception:  # noqa: BLE001
+        current_migration = None
+    failed_jobs = len(session.scalars(select(Job).where(Job.status.in_(["failed", "not_eligible"]))).all())
+    preview_links = len(session.scalars(select(DemoPreviewLink)).all()) if "DemoPreviewLink" in globals() else 0
+    return {
+        "status": "ok",
+        "environment": settings.environment,
+        "database": "ok",
+        "migration": {"current": current_migration, "expected": "0019_delivery_projects.sql"},
+        "storage": {
+            "backend": settings.storage_backend,
+            "artifact_root_writable": writable(settings.demo_artifact_root),
+            "export_root_writable": writable(settings.export_root),
+        },
+        "auth": {"enabled": settings.auth_enabled, "secure_cookies": settings.secure_cookies},
+        "preview_link_count": preview_links,
+        "failed_or_not_eligible_jobs": failed_jobs,
+        "system_delivery_count": 0,
+        "safety": {
+            "sending_enabled": False,
+            "inbox_sync_enabled": False,
+            "crm_sync_enabled": False,
+            "credentials_stored": False,
+        },
+    }
 
 
 @app.post("/v1/campaigns", response_model=CampaignResponse, status_code=201)

@@ -2,7 +2,7 @@
 
 A controlled, measurable system for discovering local businesses, auditing their digital presence, scoring addressable opportunities, generating truthful demo experiences, and supporting human-approved sales workflows.
 
-> **Status:** Sprint 13 pilot-readiness hardening implemented. External providers and sending remain disabled by default.
+> **Status:** v1 release-candidate productization implemented through Sprints 28–30. External providers and sending remain disabled by default.
 
 ## Product thesis
 
@@ -154,3 +154,9 @@ second-batch scale-up pack. It does not change the no-sending boundary.
 Sprint 20–21 adds calibration guidance and source-aware homepage enrichment.
 Enrichment is limited to already-known HTTP(S) homepages and stores normalized
 facts with provenance; it does not broad-crawl or send anything.
+
+Productization status (Sprints 28–30): use `/ui/system` or `GET /v1/system/status`
+for non-secret operations status. Proposal and delivery workflows have synthetic
+smoke coverage via `scripts/smoke_proposals.py` and `scripts/smoke_delivery.py`.
+See the operator, deployment, backup/restore, troubleshooting, and v1 release
+documents under `docs/` before operating outside a developer laptop.
