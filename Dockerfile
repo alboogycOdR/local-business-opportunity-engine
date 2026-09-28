@@ -16,7 +16,8 @@ RUN pip install --no-cache-dir \
     "redis>=5.0" \
     "alembic>=1.13" \
     "httpx>=0.27" \
-    "playwright>=1.50"
+    "playwright>=1.50" \
+    "beautifulsoup4>=4.12"
 
 COPY apps ./apps
 COPY packages ./packages
