@@ -113,6 +113,9 @@ def persist_score(
     session.add(row)
     session.flush()
     for component in result.components:
+        evidence = [
+            item.model_dump(mode="json") if hasattr(item, "model_dump") else item for item in component.evidence
+        ]
         session.add(
             OpportunityComponent(
                 opportunity_score_id=row.id,
@@ -120,7 +123,7 @@ def persist_score(
                 category=component.category,
                 points=component.points,
                 max_points=component.max_points,
-                evidence=component.evidence,
+                evidence=evidence,
                 source_type=component.source_type,
                 confidence=component.confidence,
             )

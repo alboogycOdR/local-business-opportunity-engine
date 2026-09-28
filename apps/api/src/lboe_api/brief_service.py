@@ -85,6 +85,10 @@ def _fact(
     )
 
 
+def _evidence_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {"items": value}
+
+
 def build_brief(session: Session, business: Business) -> BusinessBriefResult:
     contacts = session.scalars(select(Contact).where(Contact.business_id == business.id)).all()
     identities = session.scalars(
@@ -226,7 +230,7 @@ def build_brief(session: Session, business: Business) -> BusinessBriefResult:
                 title="Starter website opportunity",
                 description="No website was verified from available sources.",
                 priority="high",
-                evidence=by_code["NO_WEBSITE"].evidence,
+                evidence=_evidence_dict(by_code["NO_WEBSITE"].evidence),
             )
         )
     for code, title, description in (
@@ -256,7 +260,11 @@ def build_brief(session: Session, business: Business) -> BusinessBriefResult:
         if code in by_code:
             opportunities.append(
                 BriefOpportunity(
-                    code=code, title=title, description=description, priority="medium", evidence=by_code[code].evidence
+                    code=code,
+                    title=title,
+                    description=description,
+                    priority="medium",
+                    evidence=_evidence_dict(by_code[code].evidence),
                 )
             )
     technical_codes = {
