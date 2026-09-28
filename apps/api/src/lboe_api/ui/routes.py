@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
 from lboe_api.db import (
@@ -22,6 +22,7 @@ from lboe_api.db import (
     Business,
     BusinessBrief,
     Campaign,
+    Contact,
     DeliveryChecklistItem,
     DeliveryMilestone,
     DeliveryProject,
@@ -297,13 +298,51 @@ def create_campaign(
     return RedirectResponse(f"/ui/campaigns/{campaign.id}", status_code=303)
 
 
+@router.post("/ui/campaigns/{campaign_id}/discover")
+async def discover_from_ui(
+    campaign_id: uuid.UUID,
+    queries: str = Form(...),
+    geography: str = Form(""),
+    latitude: float | None = Form(None),
+    longitude: float | None = Form(None),
+    max_results: int = Form(25),
+    db: Session = Depends(session),
+) -> RedirectResponse:
+    """Run the provider-neutral discovery workflow from the operator console."""
+    from lboe_api.main import DiscoveryRequestBody, discover_campaign
+
+    campaign = db.get(Campaign, campaign_id)
+    if campaign is None:
+        raise HTTPException(404, "campaign_not_found")
+    query_list = [item.strip() for item in queries.split(",") if item.strip()]
+    if not query_list:
+        raise HTTPException(422, "at_least_one_query_required")
+    body = DiscoveryRequestBody(
+        queries=query_list,
+        geography=geography.strip() or campaign.geography,
+        latitude=latitude,
+        longitude=longitude,
+        max_results=max_results,
+        timeout_seconds=300,
+        idempotency_key=f"ui:{campaign_id}:{','.join(query_list)}:{latitude}:{longitude}",
+    )
+    try:
+        result = await discover_campaign(campaign_id, body, db)
+        status = result.get("status", "completed")
+    except HTTPException as exc:
+        status = f"error:{exc.detail}"
+    return RedirectResponse(f"/ui/campaigns/{campaign_id}?discovery_status={esc(status)}", status_code=303)
+
+
 @router.get("/ui/campaigns/{campaign_id}", response_class=HTMLResponse)
 def campaign_detail(
     campaign_id: uuid.UUID,
     state: str | None = None,
     action: str | None = None,
     band: str | None = None,
+    website_status: str | None = None,
     q: str | None = None,
+    discovery_status: str | None = None,
     db: Session = Depends(session),
 ) -> HTMLResponse:
     from lboe_api.db import Campaign
@@ -315,6 +354,7 @@ def campaign_detail(
         select(Business).where(Business.campaign_id == campaign_id).order_by(Business.display_name)
     ).all()
     rows = []
+    visible_businesses: list[Business] = []
     for business in businesses:
         score = db.scalar(
             select(OpportunityScore)
@@ -326,6 +366,7 @@ def campaign_detail(
             .where(BusinessBrief.business_id == business.id)
             .order_by(BusinessBrief.created_at.desc())
         )
+        website = db.scalar(select(Contact).where(Contact.business_id == business.id, Contact.channel == "website"))
         if (
             state
             and business.state != state
@@ -335,33 +376,59 @@ def campaign_detail(
             and (not brief or brief.recommended_next_action != action)
             or band
             and (not score or score.band != band)
+            or website_status == "no_website"
+            and website is not None
+            or website_status == "website_present"
+            and website is None
         ):
             continue
+        visible_businesses.append(business)
         demo = db.scalar(
             select(GeneratedDemo)
             .where(GeneratedDemo.business_id == business.id)
             .order_by(GeneratedDemo.created_at.desc())
         )
+        website_label = "No website" if website is None else "Website present"
         rows.append(
-            f"<tr><td><a href='/ui/businesses/{business.id}'>{esc(business.display_name)}</a></td><td>{esc(business.category)}</td><td>{esc(business.locality)}</td><td><span class='badge'>{esc(business.state)}</span></td><td>{score.score if score else '—'}</td><td>{esc(score.band if score else '')}</td><td>{esc(brief.recommended_next_action if brief else '')}</td><td>{esc(demo.status if demo else '')}</td></tr>"
+            f"<tr><td><a class='table-primary' href='/ui/businesses/{business.id}'>{esc(business.display_name)}</a><small class='table-sub'>{esc(website_label)}</small></td><td>{esc(business.category)}</td><td>{esc(business.locality)}</td><td><span class='badge'>{esc(business.state)}</span></td><td>{score.score if score else '—'}</td><td>{esc(score.band if score else '')}</td><td>{esc(brief.recommended_next_action if brief else '')}</td><td>{esc(demo.status if demo else '')}</td></tr>"
         )
-    filters = f"<form method='get'><input name='q' value='{esc(q)}' placeholder='Search business'><input name='state' value='{esc(state)}' placeholder='State'><input name='action' value='{esc(action)}' placeholder='Recommended action'><input name='band' value='{esc(band)}' placeholder='Score band'><button>Filter</button></form>"
+    filters = f"<form class='lead-filters' method='get'><input name='q' value='{esc(q)}' placeholder='Search business'><select name='website_status'><option value=''>All website statuses</option><option value='no_website' {'selected' if website_status == 'no_website' else ''}>No website</option><option value='website_present' {'selected' if website_status == 'website_present' else ''}>Website present</option></select><input name='state' value='{esc(state)}' placeholder='State'><input name='action' value='{esc(action)}' placeholder='Recommended action'><input name='band' value='{esc(band)}' placeholder='Score band'><button>Filter leads</button></form>"
     table = (
         "<table><tr><th>Business</th><th>Category</th><th>Locality</th><th>State</th><th>Score</th><th>Band</th><th>Action</th><th>Demo</th></tr>"
         + "".join(rows)
         + "</table>"
     )
     intro = f"<div class='hero'><div class='hero-copy'><div class='eyebrow'>Campaign workspace</div><h1>{esc(campaign.name)}</h1><p>{esc(campaign.vertical)} in {esc(campaign.geography or 'your target geography')}. Select a marker or a lead below to continue.</p></div><div class='hero-actions'><a class='button button-primary' href='/ui/queues'>Work the queues</a><a class='button button-secondary' href='https://www.google.com/maps/search/?api=1&query={__import__('urllib.parse', fromlist=['quote_plus']).quote_plus((campaign.geography or '') + ' ' + campaign.vertical)}' target='_blank' rel='noreferrer'>Open Google Maps</a></div></div>"
+    discovery_notice = (
+        f"<div class='notice'>Discovery result: <strong>{esc(discovery_status)}</strong>. Review the lead list below, then filter by website status.</div>"
+        if discovery_status
+        else ""
+    )
+    discovery_form = (
+        "<section class='section discovery-panel'><div><span class='eyebrow'>Find businesses</span><h2>Run discovery in this campaign</h2><p class='muted'>Search Google Maps for a vertical and location. Coordinates are required by the maps provider and keep the search predictable.</p></div>"
+        "<form method='post' action='/ui/campaigns/"
+        + str(campaign_id)
+        + "/discover'><input name='queries' placeholder='Queries, e.g. hair salons' required><input name='geography' value='"
+        + esc(campaign.geography or "")
+        + "' placeholder='Geography'><div class='discovery-coordinates'><input name='latitude' type='number' step='any' placeholder='Latitude' required><input name='longitude' type='number' step='any' placeholder='Longitude' required><input name='max_results' type='number' min='1' max='100' value='25' aria-label='Maximum results'></div><button class='button-primary'>Find businesses</button></form></section>"
+    )
     return page(
         f"Campaign · {campaign.name}",
-        intro
-        + map_panel(campaign, businesses)
+        discovery_notice
+        + intro
+        + discovery_form
+        + map_panel(campaign, visible_businesses)
         + f"<section class='section'><div class='section-head'><h2>Lead list</h2><span class='badge'>{len(rows)} shown</span></div>{filters}{table}</section>",
     )
 
 
 @router.get("/ui/businesses/{business_id}", response_class=HTMLResponse)
-def business_detail(business_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+def business_detail(
+    business_id: uuid.UUID,
+    action_completed: str | None = None,
+    action_error: str | None = None,
+    db: Session = Depends(session),
+) -> HTMLResponse:
     business = db.get(Business, business_id)
     if business is None:
         raise HTTPException(404, "business_not_found")
@@ -375,6 +442,11 @@ def business_detail(business_id: uuid.UUID, db: Session = Depends(session)) -> H
     )
     demos = db.scalars(
         select(GeneratedDemo).where(GeneratedDemo.business_id == business_id).order_by(GeneratedDemo.created_at.desc())
+    ).all()
+    proposals = db.scalars(
+        select(ProposalPackage)
+        .where(ProposalPackage.business_id == business_id)
+        .order_by(ProposalPackage.created_at.desc())
     ).all()
     package = db.scalar(
         select(OutreachDraftPackage)
@@ -403,6 +475,13 @@ def business_detail(business_id: uuid.UUID, db: Session = Depends(session)) -> H
             for demo in demos
         )
         or "<li>None</li>"
+    )
+    proposal_html = (
+        "".join(
+            f"<li><a href='/ui/proposals/{proposal.id}'>Proposal pack</a> · {esc(proposal.proposal_type.replace('_', ' '))} · {esc(proposal.status)}</li>"
+            for proposal in proposals
+        )
+        or "<li>No proposal pack yet.</li>"
     )
     event_html = (
         "".join(
@@ -506,21 +585,64 @@ def business_detail(business_id: uuid.UUID, db: Session = Depends(session)) -> H
         pilot_banner = f"<div class='safety'>{'DRY RUN MODE — manual outreach and CRM outcome logging are blocked by the operator console.' if pilot.mode == 'dry_run' else 'ACTIVE PILOT MODE — manual records represent operator activity; LBOE still sends nothing.'} <a href='/ui/pilots/{pilot.id}'>View pilot</a></div>"
     next_action_button = ""
     if raw_action in {"conversion_upgrade_offer", "technical_cleanup_offer", "generate_demo"}:
-        next_action_button = f"<a class='button button-primary' href='/ui/businesses/{business_id}/outreach-workbench'>Open operator workspace</a>"
+        action_value = "generate_demo"
+        action_label = "Generate concept preview"
+        if raw_action == "conversion_upgrade_offer":
+            action_label = "Generate conversion concept"
+        elif raw_action == "technical_cleanup_offer":
+            action_label = "Generate cleanup concept"
+        next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='{action_value}'><button class='button-primary'>{action_label}</button></form>"
+    elif score is None:
+        next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='score'><button class='button-primary'>Score this lead</button></form>"
+    elif brief is None:
+        next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='brief'><button class='button-primary'>Prepare business brief</button></form>"
+    elif any(demo.status == "approved" for demo in demos) and not proposals:
+        next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='proposal'><button class='button-primary'>Create proposal pack</button></form>"
     body = (
         pilot_banner
+        + (
+            f"<div class='success'>Action completed: {esc(action_completed.replace('_', ' '))}.</div>"
+            if action_completed
+            else ""
+        )
+        + (f"<div class='warning'>Action could not be completed: {esc(action_error)}</div>" if action_error else "")
         + f"<div class='page-intro'><div><div class='eyebrow'>Business workspace</div><h1>{esc(business.display_name)}</h1><p class='muted'>{esc(business.category or 'Local business')} · {esc(business.locality or 'Location not verified')}</p></div><span class='badge'>{esc(business.state.replace('_', ' ').title())}</span></div>"
         + f"<section class='next-action'><div><div class='eyebrow'>Recommended next step</div><h2>{esc(action_title)}</h2><p>{esc(action_reason)}</p></div>{next_action_button}</section>"
         + f"<div class='cards'><div class='card'><span>Opportunity score</span><b>{score_value}</b><small>{esc(band)} · {esc(score_explanation)}</small></div><div class='card'><span>Evidence status</span><b>{'Ready' if score and brief else 'In progress'}</b><small>{'Score and brief available' if score and brief else 'More evidence may be needed'}</small></div><div class='card'><span>Outreach</span><b>{'Drafted' if package else 'Not started'}</b><small>{'No messages are sent by LBOE'}</small></div></div>"
         + f"<section class='section'><div class='section-head'><h2>What we know</h2><span class='badge'>Verified identity</span></div><p><strong>{esc(business.display_name)}</strong> is listed as a <strong>{esc(business.category or 'local business')}</strong> in <strong>{esc(business.locality or 'an unverified location')}</strong>.</p><p class='muted'>{esc(business.address_text or 'A full address has not been verified yet.')}</p><p class='muted'>This page summarizes evidence collected by LBOE. It does not claim the business is poorly run.</p></section>"
         + f"<section class='section'><h2>Why this recommendation?</h2><p>{esc(brief.summary if brief else action_reason)}</p>{observability}</section>"
         + f"<section class='section'><h2>Evidence progress</h2><div class='stat-line'><span>Website / audit</span><strong>{'Audited' if latest_audit else 'Not audited'}</strong></div><div class='stat-line'><span>Business brief</span><strong>{'Prepared' if brief else 'Not prepared'}</strong></div><div class='stat-line'><span>Optional enrichment</span><strong>{'Available' if enrichment_runs else 'Not run'}</strong></div><p class='muted'>Enrichment is optional. “Not run” is not an error; the current recommendation can still be based on discovery and audit evidence.</p></section>"
-        + f"<section class='section'><h2>Demo and outreach status</h2><p>{esc(package.status.replace('_', ' ').title()) if package else 'No outreach draft has been prepared.'}</p><ul>{demo_html}</ul><p class='muted'>LBOE does not send email, WhatsApp, or other messages automatically.</p></section>"
+        + f"<section class='section'><h2>Demo and proposal path</h2><p>{esc(package.status.replace('_', ' ').title()) if package else 'No outreach draft has been prepared.'}</p><ul>{demo_html}</ul><h3>Proposal packs</h3><ul>{proposal_html}</ul><p class='muted'>For a no-website lead, generate a concept preview first. After human approval, create a proposal pack for operator review. LBOE does not send messages automatically.</p></section>"
         + f"<section class='section'><h2>Activity</h2><h3>CRM events</h3><ul>{event_html}</ul><h3>Assignments</h3><ul>{''.join(f'<li>{esc(str(a.operator_id))} · {esc(a.status)}</li>' for a in assignments) or '<li>None</li>'}</ul><form method='post' action='/ui/businesses/{business_id}/assign'><select name='operator_id'>{operator_options}</select><button>Assign</button></form></section>"
         + f"<section class='section'><h2>Operator notes</h2><ul>{comment_html}</ul><form method='post' action='/ui/businesses/{business_id}/comment'><textarea name='body' required placeholder='Add context for the next operator'></textarea><button>Add note</button></form></section>"
         + f"<section class='section'><h2>Safety</h2><p class='muted'>Suppressing a business prevents future outreach actions and is recorded for auditability.</p><form method='post' action='/ui/businesses/{business_id}/suppress'><input name='reason' required placeholder='Suppression reason'><button>Suppress business</button></form></section>"
     )
     return page(business.display_name, body)
+
+
+@router.post("/ui/businesses/{business_id}/action")
+async def business_action(
+    business_id: uuid.UUID, action: str = Form(...), db: Session = Depends(session)
+) -> RedirectResponse:
+    """Run one explicit, safe operator action and return to the business workspace."""
+    from lboe_api.main import ScoreRequestBody, create_brief, create_demo, create_proposal, score_business
+
+    if db.get(Business, business_id) is None:
+        raise HTTPException(404, "business_not_found")
+    try:
+        if action == "score":
+            await score_business(business_id, ScoreRequestBody(idempotency_key="ui"), db)
+        elif action == "brief":
+            await create_brief(business_id, {"idempotency_key": "ui"}, db)
+        elif action == "generate_demo":
+            create_demo(business_id, {"idempotency_key": "ui"}, db)
+        elif action == "proposal":
+            create_proposal(business_id, {"idempotency_key": "ui"}, db)
+        else:
+            raise HTTPException(422, "unsupported_business_action")
+    except HTTPException as exc:
+        return RedirectResponse(f"/ui/businesses/{business_id}?action_error={esc(exc.detail)}", status_code=303)
+    return RedirectResponse(f"/ui/businesses/{business_id}?action_completed={esc(action)}", status_code=303)
 
 
 @router.get("/ui/businesses/{business_id}/outreach-workbench", response_class=HTMLResponse)
@@ -687,6 +809,14 @@ def queues(db: Session = Depends(session)) -> HTMLResponse:
             "CRM follow-up",
             select(Business).where(Business.state.in_(["CONTACTED", "REPLIED", "MEETING", "PROPOSAL"])),
         ),
+        (
+            "no-website",
+            "No website opportunities",
+            select(Business).where(
+                ~exists().where(Contact.business_id == Business.id, Contact.channel == "website"),
+                Business.state.not_in(["SUPPRESSED", "ARCHIVED"]),
+            ),
+        ),
     ]
     body = (
         "<div class='queue-grid'>"
@@ -701,6 +831,8 @@ def queues(db: Session = Depends(session)) -> HTMLResponse:
 
 @router.get("/ui/queues/{queue_name}", response_class=HTMLResponse)
 def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLResponse:
+    if queue_name == "no-website":
+        return no_website_queue(db)
     if queue_name == "no-demo-reason":
         return no_demo_reason_queue(db)
     if queue_name == "qa-failed":
@@ -720,6 +852,13 @@ def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLRespons
         "crm-followup": (
             "CRM follow-up",
             select(Business).where(Business.state.in_(["CONTACTED", "REPLIED", "MEETING", "PROPOSAL"])),
+        ),
+        "no-website": (
+            "No website opportunities",
+            select(Business).where(
+                ~exists().where(Contact.business_id == Business.id, Contact.channel == "website"),
+                Business.state.not_in(["SUPPRESSED", "ARCHIVED"]),
+            ),
         ),
     }
     if queue_name not in mapping:
@@ -751,6 +890,51 @@ def _reason_queue(title: str, items: list[tuple[Business, str, str]]) -> HTMLRes
         "<table><tr><th>Business</th><th>State</th><th>Blocking reason</th><th>Safe next action</th></tr>"
         + rows
         + "</table>",
+    )
+
+
+def no_website_queue(db: Session) -> HTMLResponse:
+    """Prioritized queue for the primary acquisition use case."""
+    businesses = db.scalars(
+        select(Business)
+        .where(
+            ~exists().where(Contact.business_id == Business.id, Contact.channel == "website"),
+            Business.state.not_in(["SUPPRESSED", "ARCHIVED"]),
+        )
+        .order_by(Business.created_at.desc())
+    ).all()
+    rows: list[str] = []
+    seen: set[tuple[str, str | None]] = set()
+    for business in businesses:
+        key = (business.display_name.strip().lower(), (business.locality or "").strip().lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        score = db.scalar(
+            select(OpportunityScore)
+            .where(OpportunityScore.business_id == business.id)
+            .order_by(OpportunityScore.created_at.desc())
+        )
+        brief = db.scalar(
+            select(BusinessBrief)
+            .where(BusinessBrief.business_id == business.id)
+            .order_by(BusinessBrief.created_at.desc())
+        )
+        action = brief.recommended_next_action.replace("_", " ") if brief else "score this lead"
+        rows.append(
+            f"<tr><td><a class='table-primary' href='/ui/businesses/{business.id}'>{esc(business.display_name)}</a><small class='table-sub'>{esc(business.locality or 'Location not verified')}</small></td><td><span class='badge'>{esc(business.state.replace('_', ' ').title())}</span></td><td>{score.score if score else '—'}</td><td>{esc(action)}</td><td><a class='button button-small button-secondary' href='/ui/businesses/{business.id}'>Review lead</a></td></tr>"
+        )
+    table = (
+        "<table><tr><th>Business</th><th>State</th><th>Score</th><th>Recommended next step</th><th></th></tr>"
+        + ("".join(rows) or "<tr><td colspan='5'>No active businesses without a website were found.</td></tr>")
+        + "</table>"
+    )
+    return page(
+        "No website opportunities",
+        "<div class='page-intro'><div><span class='eyebrow'>Primary acquisition queue</span><h1>No website opportunities</h1><p class='muted'>These active businesses have no website contact recorded. Review the facts, score the lead, and prepare a starter website concept when eligible.</p></div><span class='badge'>"
+        + str(len(rows))
+        + " unique leads</span></div>"
+        + table,
     )
 
 

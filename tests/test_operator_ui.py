@@ -34,6 +34,31 @@ def test_operator_ui_pages_and_safety_banner() -> None:
             assert "System delivery is disabled" in response.text
 
 
+def test_no_website_queue_and_campaign_filter() -> None:
+    with TestClient(app) as client:
+        campaign = client.post(
+            "/v1/campaigns", json={"name": "No Website UI", "vertical": "hair_salon", "geography": "Cape Town"}
+        ).json()
+        imported = client.post(
+            f"/v1/campaigns/{campaign['id']}/import",
+            json={
+                "format": "json",
+                "records": [
+                    {"display_name": "No Website Salon", "category": "hair salon"},
+                    {"display_name": "Website Salon", "category": "hair salon", "website": "https://example.com"},
+                ],
+            },
+        ).json()
+        no_site = client.get(f"/ui/campaigns/{campaign['id']}?website_status=no_website")
+        assert no_site.status_code == 200
+        assert "No Website Salon" in no_site.text
+        assert ">Website Salon</a>" not in no_site.text
+        queue = client.get("/ui/queues/no-website")
+        assert queue.status_code == 200
+        assert "No website opportunities" in queue.text
+        assert imported["successes"]
+
+
 def test_ui_suppression_is_audited() -> None:
     with TestClient(app) as client:
         campaign = client.post("/v1/campaigns", json={"name": "UI Safety", "vertical": "salon"}).json()
