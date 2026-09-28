@@ -52,6 +52,7 @@ from lboe_api.db import (
     PilotSourcePolicyAcknowledgement,
     ProposalPackage,
     SuppressionEntry,
+    Website,
 )
 from lboe_api.demo_generator import qa_explanations
 from lboe_api.main import SessionLocal, settings
@@ -135,7 +136,7 @@ def esc(value: Any) -> str:
 
 def page(title: str, body: str) -> HTMLResponse:
     return HTMLResponse(
-        f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{esc(title)} · LBOE</title><link rel='stylesheet' href='/ui/static/ui.css'></head><body><header><a href='/ui'><strong>LBOE Operator Cockpit</strong></a><nav><a href='/ui/campaigns'>Campaigns</a><a href='/ui/queues'>Queues</a><a href='/ui/queues/proposal-ready'>Proposals</a><a href='/ui/queues/delivery'>Delivery</a><a href='/ui/pilots'>Pilots</a><a href='/ui/reports/pilot'>Reports</a><a href='/ui/operators'>Admin</a><a href='/ui/system'>System</a></nav></header><div class='safety'>System delivery is disabled. LBOE does not send email, WhatsApp, SMS, or CRM messages.</div><main><p class='muted'><a href='/ui'>Dashboard</a> / {esc(title)}</p><h1>{esc(title)}</h1>{body}</main></body></html>"""
+        f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{esc(title)} · LBOE</title><link rel='stylesheet' href='/ui/static/ui.css'></head><body><header><a href='/ui'><strong>LBOE Operator Cockpit</strong></a><nav><a href='/ui'>Dashboard</a><a href='/ui/opportunities'>Opportunities</a><a href='/ui/campaigns'>Campaigns</a><a href='/ui/queues'>Queues</a><a href='/ui/queues/proposal-ready'>Proposals</a><a href='/ui/queues/delivery'>Delivery</a><a href='/ui/pilots'>Pilots</a><a href='/ui/reports/pilot'>Reports</a><a href='/ui/operators'>Admin</a><a href='/ui/system'>System</a></nav></header><div class='safety'>System delivery is disabled. LBOE does not send email, WhatsApp, SMS, or CRM messages.</div><main><p class='muted'><a href='/ui'>Dashboard</a> / {esc(title)}</p><h1>{esc(title)}</h1>{body}</main></body></html>"""
     )
 
 
@@ -161,6 +162,209 @@ def metric_cards(report: dict[str, Any]) -> str:
         )
         + "</div>"
     )
+
+
+def build_opportunity_cards(db: Session, limit: int = 20) -> list[dict[str, Any]]:
+    """Build a small, explainable queue of the next best operator actions.
+
+    This is deliberately a UI projection over existing records. It does not
+    change scoring, lifecycle state, or outreach eligibility.
+    """
+
+    technical_codes = {
+        "MISSING_H1",
+        "MISSING_TITLE",
+        "MISSING_META_DESCRIPTION",
+        "MISSING_VIEWPORT_META",
+        "LOW_IMAGE_ALT_COVERAGE",
+        "CONSOLE_ERRORS",
+        "FAILED_FIRST_PARTY_REQUESTS",
+    }
+    conversion_codes = {"NO_BOOKING_PATH", "NO_WHATSAPP_CTA", "NO_CLICK_TO_CALL", "NO_CONTACT_FORM"}
+    component_labels = {
+        "NO_WEBSITE": "No website found",
+        "NO_BOOKING_PATH": "No booking path detected",
+        "NO_WHATSAPP_CTA": "No WhatsApp action detected",
+        "NO_CLICK_TO_CALL": "No click-to-call path detected",
+        "NO_CONTACT_FORM": "No contact form detected",
+        "MISSING_H1": "Primary page heading is missing",
+        "MISSING_TITLE": "Page title is missing",
+        "MISSING_META_DESCRIPTION": "Meta description is missing",
+        "MISSING_VIEWPORT_META": "Mobile viewport setting is missing",
+        "LOW_IMAGE_ALT_COVERAGE": "Some images lack alternative text",
+        "CONSOLE_ERRORS": "Browser console errors were observed",
+        "FAILED_FIRST_PARTY_REQUESTS": "First-party requests failed",
+    }
+
+    cards: list[dict[str, Any]] = []
+    businesses = db.scalars(select(Business).order_by(Business.updated_at.desc(), Business.display_name)).all()
+    for business in businesses:
+        score = db.scalar(
+            select(OpportunityScore)
+            .where(OpportunityScore.business_id == business.id)
+            .order_by(OpportunityScore.created_at.desc())
+        )
+        brief = db.scalar(
+            select(BusinessBrief)
+            .where(BusinessBrief.business_id == business.id)
+            .order_by(BusinessBrief.created_at.desc())
+        )
+        website = db.scalar(
+            select(Website).where(Website.business_id == business.id).order_by(Website.checked_at.desc())
+        )
+        demo = db.scalar(
+            select(GeneratedDemo)
+            .where(GeneratedDemo.business_id == business.id)
+            .order_by(GeneratedDemo.created_at.desc())
+        )
+        proposal = db.scalar(
+            select(ProposalPackage)
+            .where(ProposalPackage.business_id == business.id)
+            .order_by(ProposalPackage.created_at.desc())
+        )
+        delivery = db.scalar(
+            select(DeliveryProject)
+            .where(DeliveryProject.business_id == business.id)
+            .order_by(DeliveryProject.updated_at.desc())
+        )
+        suppression = db.scalar(
+            select(SuppressionEntry)
+            .where(SuppressionEntry.business_id == business.id)
+            .order_by(SuppressionEntry.created_at.desc())
+        )
+        components = (
+            db.scalars(
+                select(OpportunityComponent)
+                .where(OpportunityComponent.opportunity_score_id == score.id)
+                .order_by(OpportunityComponent.points.desc())
+            ).all()
+            if score
+            else []
+        )
+        holds = (
+            db.scalars(select(OpportunityHold).where(OpportunityHold.opportunity_score_id == score.id)).all()
+            if score
+            else []
+        )
+        reasons: list[str] = []
+        if website is None:
+            reasons.append("No website found")
+        for component in components:
+            label = component_labels.get(component.code)
+            if label and label not in reasons:
+                reasons.append(label)
+            if len(reasons) >= 4:
+                break
+        if not reasons and website is not None:
+            reasons.append("Website presence recorded")
+        if business.normalized_phone and len(reasons) < 4:
+            reasons.append("Phone contact available")
+        if score and len(reasons) < 4:
+            reasons.append(f"Opportunity score: {score.score} ({score.band})")
+
+        blockers = [entry.reason for entry in ([suppression] if suppression else [])]
+        blockers.extend(hold.reason for hold in holds)
+        blocked = bool(blockers) or business.state in {"SUPPRESSED", "ARCHIVED"}
+        if business.state == "SUPPRESSED" and not blockers:
+            blockers.append("Business is suppressed")
+        if any(hold.code == "AMBIGUOUS_IDENTITY" for hold in holds):
+            blocked = True
+
+        if blocked:
+            offer = "No action"
+            next_label = "View details"
+            next_url = f"/ui/businesses/{business.id}"
+        elif delivery:
+            offer = "Delivery Follow-up"
+            next_label = "Continue delivery"
+            next_url = f"/ui/delivery-projects/{delivery.id}"
+        elif proposal:
+            offer = "Proposal Follow-up"
+            next_label = "Review proposal"
+            next_url = f"/ui/proposals/{proposal.id}"
+        elif demo and demo.status in {"qa_passed", "review_pending", "approved"}:
+            offer = "Starter Website" if demo.demo_type == "starter_website" else "Conversion Upgrade"
+            next_label = "Review concept"
+            next_url = f"/ui/demos/{demo.id}/preview"
+        elif website is None:
+            offer = "Starter Website"
+            next_label = "View opportunity"
+            next_url = f"/ui/businesses/{business.id}"
+        elif any(component.code in conversion_codes for component in components):
+            offer = "Conversion Upgrade"
+            next_label = "Review evidence"
+            next_url = f"/ui/businesses/{business.id}"
+        elif any(component.code in technical_codes for component in components):
+            offer = "Technical Cleanup"
+            next_label = "Review evidence"
+            next_url = f"/ui/businesses/{business.id}"
+        elif score and score.recommended_next_action == "score_only":
+            offer = "Score Only"
+            next_label = "Review details"
+            next_url = f"/ui/businesses/{business.id}"
+        else:
+            offer = "Review Required"
+            next_label = "Review evidence"
+            next_url = f"/ui/businesses/{business.id}"
+
+        confidence = "Needs review"
+        confidence_value = brief.confidence if brief else (0.85 if score and score.band == "high" else 0.6)
+        if not blocked and confidence_value >= 0.85:
+            confidence = "High confidence"
+        elif not blocked and confidence_value >= 0.65:
+            confidence = "Medium confidence"
+        score_value = score.score if score else None
+        priority = (0 if blocked else 100) + (score_value or 0)
+        if demo and demo.status in {"qa_passed", "review_pending", "approved"}:
+            priority += 25
+        if proposal:
+            priority += 35
+        if delivery:
+            priority += 45
+        cards.append(
+            {
+                "id": str(business.id),
+                "business_id": str(business.id),
+                "business_name": business.display_name,
+                "locality": business.locality or business.address_text or "Location not verified",
+                "state": business.state,
+                "score": score_value,
+                "confidence_label": confidence,
+                "recommended_offer": offer,
+                "reasons": reasons[:4],
+                "blockers": blockers[:3],
+                "blocked": blocked,
+                "next_action_label": next_label,
+                "next_action_url": next_url,
+                "detail_url": f"/ui/businesses/{business.id}",
+                "priority": priority,
+            }
+        )
+    cards.sort(key=lambda item: (-item["priority"], item["business_name"].lower()))
+    return cards[:limit]
+
+
+def opportunity_cards_html(cards: list[dict[str, Any]]) -> str:
+    if not cards:
+        return "<div class='empty-state'>No opportunity cards yet. Discover or import businesses to begin.</div>"
+    rendered = []
+    for card in cards:
+        score = f"Score {card['score']}" if card["score"] is not None else "Not scored"
+        reasons = "".join(f"<li>✓ {esc(reason)}</li>" for reason in card["reasons"])
+        blockers = (
+            f"<div class='opportunity-blocker'><strong>Blocked:</strong> {esc('; '.join(card['blockers']))}</div>"
+            if card["blockers"]
+            else ""
+        )
+        action = (
+            f"<a class='button button-primary button-small' href='{esc(card['next_action_url'])}'>{esc(card['next_action_label'])}</a>"
+            if not card["blocked"] or card["next_action_label"] == "View details"
+            else ""
+        )
+        rendered.append(
+            f"<article class='opportunity-card'><div class='opportunity-card-top'><span class='badge'>{esc(card['confidence_label'])}</span><span class='opportunity-score'>{esc(score)}</span></div><h2><a href='{esc(card['detail_url'])}'>{esc(card['business_name'])}</a></h2><p class='muted'>{esc(card['locality'])} · {esc(card['state'].replace('_', ' ').title())}</p><div class='opportunity-offer'><span>Recommended offer</span><strong>{esc(card['recommended_offer'])}</strong></div><h3>Why this matters</h3><ul class='opportunity-reasons'>{reasons or '<li>Evidence is still being collected</li>'}</ul>{blockers}<div class='opportunity-actions'>{action}<a class='button button-secondary button-small' href='{esc(card['detail_url'])}'>View details</a></div></article>"
+        )
+    return "<div class='opportunity-grid'>" + "".join(rendered) + "</div>"
 
 
 def map_panel(campaign: Any, businesses: Sequence[Business]) -> str:
@@ -243,13 +447,29 @@ def dashboard(db: Session = Depends(session)) -> HTMLResponse:
         if campaign
         else []
     )
+    opportunity_cards = build_opportunity_cards(db, limit=5)
     body = (
-        "<div class='hero'><div class='hero-copy'><div class='eyebrow'>Field operations console</div><h1>Turn a map of businesses into your next best action.</h1><p>Start with a campaign, inspect the map, and work each lead through evidence, score, demo, proposal, and delivery.</p></div><div class='hero-actions'><a class='button button-primary' href='/ui/campaigns'>Open campaigns</a><a class='button button-secondary' href='/ui/queues'>View queues</a></div></div>"
+        "<div class='hero'><div class='hero-copy'><div class='eyebrow'>Field operations console</div><h1>Turn a map of businesses into your next best action.</h1><p>Start with a campaign, inspect the map, and work each lead through evidence, score, demo, proposal, and delivery.</p></div><div class='hero-actions'><a class='button button-primary' href='/ui/opportunities'>Open Opportunity Cards</a><a class='button button-secondary' href='/ui/campaigns'>Open campaigns</a><a class='button button-secondary' href='/ui/queues'>View queues</a></div></div>"
         + metric_cards(report)
         + next_action_panel(report)
+        + "<section class='section'><div class='section-head'><div><div class='eyebrow'>Revenue focus</div><h2>Opportunity Cards</h2><p class='muted'>The clearest next actions from your current evidence.</p></div><a class='button button-secondary button-small' href='/ui/opportunities'>View all</a></div>"
+        + opportunity_cards_html(opportunity_cards)
+        + "</section>"
         + f"<div class='layout-grid'><section class='section'><div class='section-head'><div><div class='eyebrow'>Geographic view</div><h2>{esc(campaign.name) if campaign else 'Your campaign map'}</h2></div><a class='button button-secondary' href='/ui/campaigns'>Manage campaigns</a></div>{map_panel(campaign, campaign_businesses) if campaign else map_panel(type('CampaignView', (), {'geography': 'Choose a geography', 'vertical': 'local business'})(), [])}</section><section class='section'><div class='eyebrow'>Today</div><h2>What needs attention</h2><div class='stat-line'><span>System delivery</span><strong>{quality.get('system_delivery_count', 0)}</strong></div><div class='stat-line'><span>Failed / blocked jobs</span><strong>{quality.get('jobs_failed', quality.get('jobs_failed_or_not_eligible', 0))}</strong></div><div class='stat-line'><span>Approved demos</span><strong>{quality.get('approved_demos', 0)}</strong></div><div class='stat-line'><span>Proposal-ready</span><strong>{quality.get('proposal_ready_queue_count', 0)}</strong></div><p class='muted'>Every action is operator-controlled. LBOE never sends messages.</p></section></div>"
     )
     return page("Pilot dashboard", body)
+
+
+@router.get("/ui/opportunities", response_class=HTMLResponse)
+def opportunities(db: Session = Depends(session)) -> HTMLResponse:
+    cards = build_opportunity_cards(db, limit=50)
+    body = (
+        "<div class='page-intro'><div><span class='eyebrow'>Revenue focus</span><h1>Opportunity Cards</h1><p class='muted'>Find the next best operator action in under five seconds. Each card combines the business, the reason it matters, the best-fit offer, confidence, and a safe next step.</p></div><span class='badge'>Operator-controlled</span></div>"
+        "<div class='notice'><strong>How to use this page:</strong> start with the highest-signal card, open the recommended safe action, and verify the evidence before preparing a proposal or delivery step.</div>"
+        "<p class='muted opportunity-safety'>LBOE does not send email, WhatsApp, SMS, or CRM messages. All contact happens manually outside LBOE.<br>Proposal packs are not contracts. Delivery approvals are operator assertions, not e-signatures.</p>"
+        + opportunity_cards_html(cards)
+    )
+    return page("Opportunity Cards", body)
 
 
 @router.get("/ui/campaigns", response_class=HTMLResponse)

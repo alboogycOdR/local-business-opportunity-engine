@@ -16,6 +16,7 @@ def test_operator_ui_pages_and_safety_banner() -> None:
         business_id = imported["successes"][0]["business_id"]
         for path in (
             "/ui",
+            "/ui/opportunities",
             "/ui/campaigns",
             f"/ui/campaigns/{campaign['id']}",
             f"/ui/businesses/{business_id}",
@@ -32,6 +33,8 @@ def test_operator_ui_pages_and_safety_banner() -> None:
             response = client.get(path)
             assert response.status_code == 200, path
             assert "System delivery is disabled" in response.text
+        assert "Opportunity Cards" in client.get("/ui").text
+        assert "Opportunity Cards" in client.get("/ui/opportunities").text
 
 
 def test_no_website_queue_and_campaign_filter() -> None:
@@ -57,6 +60,11 @@ def test_no_website_queue_and_campaign_filter() -> None:
         assert queue.status_code == 200
         assert "No website opportunities" in queue.text
         assert imported["successes"]
+        opportunities = client.get("/ui/opportunities")
+        assert opportunities.status_code == 200
+        assert "No Website Salon" in opportunities.text
+        assert "Starter Website" in opportunities.text
+        assert "View opportunity" in opportunities.text
 
 
 def test_ui_suppression_is_audited() -> None:
