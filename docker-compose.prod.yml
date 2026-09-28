@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lboe}
+      POSTGRES_USER: ${POSTGRES_USER:-lboe}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - lboe_prod_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lboe} -d ${POSTGRES_DB:-lboe}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - lboe_prod_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      LBOE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-lboe}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lboe}
+      LBOE_REDIS_URL: redis://redis:6379/0
+      LBOE_API_HOST: 0.0.0.0
+      LBOE_API_PORT: 8000
+      LBOE_AUTO_CREATE_SCHEMA: "false"
+      LBOE_SECURE_COOKIES: "true"
+      LBOE_STORAGE_BACKEND: local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8095:8000"
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./exports:/app/exports
+
+volumes:
+  lboe_prod_postgres:
+  lboe_prod_redis:

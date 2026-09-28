@@ -1,0 +1,11 @@
+.git
+.venv
+.mypy_cache
+.pytest_cache
+.ruff_cache
+artifacts
+exports
+specs
+.env
+*.pyc
+__pycache__
