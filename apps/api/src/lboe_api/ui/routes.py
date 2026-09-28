@@ -29,7 +29,6 @@ from lboe_api.db import (
     DemoPreviewAccessEvent,
     DemoPreviewLink,
     DemoQaRun,
-    EnrichmentFactRow,
     EnrichmentRun,
     GeneratedDemo,
     LeadCrmEvent,
@@ -430,22 +429,96 @@ def business_detail(business_id: uuid.UUID, db: Session = Depends(session)) -> H
     latest_audit = db.scalar(
         select(AuditRun).where(AuditRun.business_id == business_id).order_by(AuditRun.completed_at.desc())
     )
-    component_html = (
+    action_labels = {
+        "generate_demo": (
+            "Generate a concept demo",
+            "The evidence is strong enough to prepare a safe, independent concept preview.",
+        ),
+        "conversion_upgrade_offer": (
+            "Review a conversion upgrade",
+            "The current site is usable, but there are specific ways to make it easier for customers to take action.",
+        ),
+        "technical_cleanup_offer": (
+            "Review a technical cleanup",
+            "The opportunity is focused on technical, accessibility, or SEO hygiene rather than a full rebuild.",
+        ),
+        "score_only": (
+            "Keep this lead in review",
+            "The business already has a functioning digital presence. No rebuild demo is recommended right now.",
+        ),
+        "audit_required": (
+            "Run the website audit",
+            "A website is present, but the evidence is not complete enough to recommend the next step.",
+        ),
+        "manual_review": (
+            "Manual review required",
+            "Identity or evidence needs an operator decision before any further action.",
+        ),
+        "do_not_contact": ("Do not contact", "A suppression or policy hold blocks outreach."),
+    }
+    raw_action = score.recommended_next_action if score else (brief.recommended_next_action if brief else None)
+    action_title, action_reason = action_labels.get(
+        raw_action or "", ("Review this business", "Collect more evidence before choosing the next step.")
+    )
+    band = score.band.title() if score else "Not scored"
+    score_value = str(score.score) if score else "—"
+    score_explanation = {
+        "low": "Lower addressable opportunity based on the evidence collected.",
+        "medium": "Some addressable gaps are present, with enough evidence for a focused next step.",
+        "high": "Significant addressable gaps are present and the evidence supports a concrete next step.",
+    }.get(score.band if score else "", "A score will appear after scoring completes.")
+
+    def component_label(code: str) -> str:
+        labels = {
+            "NO_CLICK_TO_CALL": "No click-to-call path",
+            "MISSING_H1": "Missing primary page heading",
+            "LOW_IMAGE_ALT_COVERAGE": "Some images lack useful alternative text",
+            "MISSING_VIEWPORT_META": "Missing mobile viewport setting",
+            "NO_BOOKING_PATH": "No booking path detected",
+            "NO_WHATSAPP_CTA": "No WhatsApp action detected",
+            "WEBSITE_HEALTHY_REDUCES_GAP": "Healthy website reduces rebuild need",
+            "VERIFIED_PHONE": "Phone contact verified",
+            "FACTS_FOR_DEMO": "Enough verified facts for a demo",
+        }
+        return labels.get(code, code.replace("_", " ").title())
+
+    component_rows = (
         "".join(
-            f"<li>{esc(c.code)} · {c.points}/{c.max_points} points · confidence {c.confidence} · source {esc(c.source_type)} · evidence {len(c.evidence) if isinstance(c.evidence, (list, dict)) else 1}</li>"
+            f"<li><strong>{esc(component_label(c.code))}</strong><span>{c.points:+d} points</span><small>{esc(c.category.replace('_', ' ').title())} · {esc(c.source_type)}</small></li>"
             for c in score_components
         )
-        or "<li>None</li>"
+        or "<li><strong>No score components yet</strong><small>Run scoring to see the evidence behind the recommendation.</small></li>"
     )
-    hold_html = "".join(f"<li>{esc(h.code)} · {esc(h.reason)}</li>" for h in score_holds) or "<li>None</li>"
-    observability = f"<section><h2>Score observability</h2><p>Score: {score.score if score else '—'} · Band: {esc(score.band if score else '')} · Action: {esc(score.recommended_next_action if score else '')} · Latest audit: {esc(latest_audit.id if latest_audit else '—')} · Brief: {esc(brief.id if brief else '—')}</p><h3>Components</h3><ul>{component_html}</ul><h3>Holds</h3><ul>{hold_html}</ul></section>"
+    hold_notice = (
+        "<div class='warning'><strong>Hold:</strong> " + "; ".join(esc(h.reason) for h in score_holds) + "</div>"
+        if score_holds
+        else "<p class='success'>No identity, suppression, or policy holds are blocking this lead.</p>"
+    )
+    observability = (
+        f"<details class='detail-disclosure'><summary>Score details and evidence</summary>"
+        f"<p class='muted'>These are scoring inputs, not judgments about how well the business is run. The score is deterministic and based only on collected evidence.</p>"
+        f"<div class='score-breakdown'><div><span>Addressable opportunity</span><strong>{sum(c.points for c in score_components if c.category == 'addressable_gap'):+d}</strong></div><div><span>Commercial readiness</span><strong>{sum(c.points for c in score_components if c.category == 'commercial_readiness'):+d}</strong></div><div><span>Reachability</span><strong>{sum(c.points for c in score_components if c.category == 'reachability'):+d}</strong></div><div><span>Demo confidence</span><strong>{sum(c.points for c in score_components if c.category == 'demo_confidence'):+d}</strong></div></div>"
+        f"<h3>Evidence components</h3><ul class='component-list'>{component_rows}</ul><h3>Holds</h3>{hold_notice}"
+        f"<p class='muted'>Internal record references are intentionally hidden from the main view. Audit: {'available' if latest_audit else 'not run'} · Brief: {'available' if brief else 'not created'}.</p></details>"
+    )
     pilot_banner = ""
     if pilot is not None:
         pilot_banner = f"<div class='safety'>{'DRY RUN MODE — manual outreach and CRM outcome logging are blocked by the operator console.' if pilot.mode == 'dry_run' else 'ACTIVE PILOT MODE — manual records represent operator activity; LBOE still sends nothing.'} <a href='/ui/pilots/{pilot.id}'>View pilot</a></div>"
+    next_action_button = ""
+    if raw_action in {"conversion_upgrade_offer", "technical_cleanup_offer", "generate_demo"}:
+        next_action_button = f"<a class='button button-primary' href='/ui/businesses/{business_id}/outreach-workbench'>Open operator workspace</a>"
     body = (
         pilot_banner
-        + observability
-        + f"<p class='badge'>{esc(business.state)}</p><section><h2>Identity</h2><p>{esc(business.display_name)} · {esc(business.category)} · {esc(business.locality)}<br>{esc(business.address_text)}</p></section><section><h2>Score / brief</h2><p>Score: {score.score if score else '—'} ({esc(score.band if score else '')})<br>Recommended action: {esc(brief.recommended_next_action if brief else '—')}</p></section><section><h2>Enrichment evidence</h2><ul>{''.join(f'<li>{esc(run.status)} · {esc(run.adapter_version)} · {len(db.scalars(select(EnrichmentFactRow).where(EnrichmentFactRow.enrichment_run_id == run.id)).all())} facts</li>' for run in enrichment_runs) or '<li>No enrichment run</li>'}</ul></section><section><h2>Demo / outreach</h2><p>{esc(package.status if package else 'No outreach draft')}</p><ul>{demo_html}</ul></section><section><h2>CRM events</h2><ul>{event_html}</ul></section><section><h2>Assignments</h2><ul>{''.join(f'<li>{a.operator_id} · {a.status}</li>' for a in assignments) or '<li>None</li>'}</ul><form method='post' action='/ui/businesses/{business_id}/assign'><select name='operator_id'>{operator_options}</select><button>Assign</button></form></section><section><h2>Operator notes</h2><ul>{comment_html}</ul><form method='post' action='/ui/businesses/{business_id}/comment'><textarea name='body' required placeholder='Append an operator note'></textarea><button>Add note</button></form></section><section><h2>Safe actions</h2><p>All workflow actions remain subject to backend lifecycle and suppression gates.</p><form method='post' action='/ui/businesses/{business_id}/suppress'><input name='reason' required placeholder='Suppression reason'><button>Suppress business</button></form></section>"
+        + f"<div class='page-intro'><div><div class='eyebrow'>Business workspace</div><h1>{esc(business.display_name)}</h1><p class='muted'>{esc(business.category or 'Local business')} · {esc(business.locality or 'Location not verified')}</p></div><span class='badge'>{esc(business.state.replace('_', ' ').title())}</span></div>"
+        + f"<section class='next-action'><div><div class='eyebrow'>Recommended next step</div><h2>{esc(action_title)}</h2><p>{esc(action_reason)}</p></div>{next_action_button}</section>"
+        + f"<div class='cards'><div class='card'><span>Opportunity score</span><b>{score_value}</b><small>{esc(band)} · {esc(score_explanation)}</small></div><div class='card'><span>Evidence status</span><b>{'Ready' if score and brief else 'In progress'}</b><small>{'Score and brief available' if score and brief else 'More evidence may be needed'}</small></div><div class='card'><span>Outreach</span><b>{'Drafted' if package else 'Not started'}</b><small>{'No messages are sent by LBOE'}</small></div></div>"
+        + f"<section class='section'><div class='section-head'><h2>What we know</h2><span class='badge'>Verified identity</span></div><p><strong>{esc(business.display_name)}</strong> is listed as a <strong>{esc(business.category or 'local business')}</strong> in <strong>{esc(business.locality or 'an unverified location')}</strong>.</p><p class='muted'>{esc(business.address_text or 'A full address has not been verified yet.')}</p><p class='muted'>This page summarizes evidence collected by LBOE. It does not claim the business is poorly run.</p></section>"
+        + f"<section class='section'><h2>Why this recommendation?</h2><p>{esc(brief.summary if brief else action_reason)}</p>{observability}</section>"
+        + f"<section class='section'><h2>Evidence progress</h2><div class='stat-line'><span>Website / audit</span><strong>{'Audited' if latest_audit else 'Not audited'}</strong></div><div class='stat-line'><span>Business brief</span><strong>{'Prepared' if brief else 'Not prepared'}</strong></div><div class='stat-line'><span>Optional enrichment</span><strong>{'Available' if enrichment_runs else 'Not run'}</strong></div><p class='muted'>Enrichment is optional. “Not run” is not an error; the current recommendation can still be based on discovery and audit evidence.</p></section>"
+        + f"<section class='section'><h2>Demo and outreach status</h2><p>{esc(package.status.replace('_', ' ').title()) if package else 'No outreach draft has been prepared.'}</p><ul>{demo_html}</ul><p class='muted'>LBOE does not send email, WhatsApp, or other messages automatically.</p></section>"
+        + f"<section class='section'><h2>Activity</h2><h3>CRM events</h3><ul>{event_html}</ul><h3>Assignments</h3><ul>{''.join(f'<li>{esc(str(a.operator_id))} · {esc(a.status)}</li>' for a in assignments) or '<li>None</li>'}</ul><form method='post' action='/ui/businesses/{business_id}/assign'><select name='operator_id'>{operator_options}</select><button>Assign</button></form></section>"
+        + f"<section class='section'><h2>Operator notes</h2><ul>{comment_html}</ul><form method='post' action='/ui/businesses/{business_id}/comment'><textarea name='body' required placeholder='Add context for the next operator'></textarea><button>Add note</button></form></section>"
+        + f"<section class='section'><h2>Safety</h2><p class='muted'>Suppressing a business prevents future outreach actions and is recorded for auditability.</p><form method='post' action='/ui/businesses/{business_id}/suppress'><input name='reason' required placeholder='Suppression reason'><button>Suppress business</button></form></section>"
     )
     return page(business.display_name, body)
 
@@ -655,7 +728,9 @@ def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLRespons
     items = db.scalars(query).all()  # type: ignore[call-overload]
     rows = []
     for item in items:
-        business_id = item.business_id
+        # Some queues query the business directly; others query a related
+        # record (demo, draft, or readiness package) with business_id.
+        business_id = getattr(item, "business_id", item.id)
         business = db.get(Business, business_id)
         rows.append(
             f"<li><a href='/ui/businesses/{business_id}'>{esc(business.display_name if business else business_id)}</a></li>"
