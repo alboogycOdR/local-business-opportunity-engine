@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import hmac
 import io
 import logging
 import uuid
@@ -11,7 +13,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from lboe_domain import (
     ALLOWED_TRANSITIONS,
@@ -39,6 +42,7 @@ from redis import Redis
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .audit_service import audit_idempotency_key, execute_audit
 from .brief_service import brief_idempotency_key, execute_brief
@@ -69,6 +73,7 @@ from .db import (
     Job,
     LeadCrmEvent,
     ManualFollowUpTask,
+    OperatorSession,
     OpportunityComponent,
     OpportunityHold,
     OpportunityScore,
@@ -148,6 +153,34 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Local Business Opportunity Engine", version="0.1.0", lifespan=lifespan)
 app.mount("/ui/static", StaticFiles(directory="apps/api/src/lboe_api/static"), name="ui-static")
+
+
+class InternalAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+        if (
+            not settings.auth_enabled
+            or not request.url.path.startswith("/ui")
+            or request.url.path in {"/ui/login", "/ui/static/ui.css"}
+        ):
+            return await call_next(request)
+        token = request.cookies.get("lboe_session")
+        if not token:
+            return RedirectResponse("/ui/login", status_code=303)
+        session_hash = hmac.new(settings.auth_secret.encode(), token.encode(), hashlib.sha256).hexdigest()
+        with SessionLocal() as db:
+            valid = db.scalar(
+                select(OperatorSession).where(
+                    OperatorSession.session_hash == session_hash,
+                    OperatorSession.revoked_at.is_(None),
+                    OperatorSession.expires_at > datetime.now(UTC),
+                )
+            )
+        if valid is None:
+            return RedirectResponse("/ui/login", status_code=303)
+        return await call_next(request)
+
+
+app.add_middleware(InternalAuthMiddleware)
 
 
 class CampaignCreate(BaseModel):

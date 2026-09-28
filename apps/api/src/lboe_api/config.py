@@ -22,4 +22,16 @@ class Settings(BaseSettings):
     audit_max_concurrency: int = 1
     demo_artifact_root: str = "artifacts"
     export_root: str = "exports"
+    auth_enabled: bool = False
+    auth_secret: str = "local-development-only-change-me"
+    operator_auth_token: str = ""
+    secure_cookies: bool = False
+    csrf_enabled: bool = False
+    storage_backend: str = "local"
+    s3_endpoint_url: str | None = None
+    s3_bucket: str | None = None
+    s3_access_key_id: str | None = None
+    s3_secret_access_key: str | None = None
+    s3_region: str = "auto"
+    signed_url_ttl_seconds: int = 900
     model_config = SettingsConfigDict(env_prefix="LBOE_", extra="ignore")

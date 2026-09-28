@@ -606,6 +606,17 @@ class Operator(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class OperatorSession(Base):
+    __tablename__ = "operator_sessions"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+    session_hash: Mapped[str] = mapped_column(String(128), index=True)
+    csrf_hash: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class OperatorAssignment(Base):
     __tablename__ = "operator_assignments"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)

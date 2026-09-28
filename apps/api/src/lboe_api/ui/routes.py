@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import html
 import secrets
 import uuid
@@ -33,6 +34,7 @@ from lboe_api.db import (
     OperatorAssignment,
     OperatorAuditEvent,
     OperatorComment,
+    OperatorSession,
     OpportunityComponent,
     OpportunityHold,
     OpportunityScore,
@@ -64,6 +66,61 @@ DISCLAIMER = "Concept preview prepared independently for demonstration. Not the 
 
 def session() -> Session:
     return SessionLocal()
+
+
+@router.get("/ui/login", response_class=HTMLResponse)
+def login_page() -> HTMLResponse:
+    return page(
+        "Operator login",
+        "<form method='post'><label>Operator token <input name='token' type='password' required></label><button>Login</button></form><p>Internal operator access only. Configure LBOE_AUTH_ENABLED and LBOE_OPERATOR_AUTH_TOKEN.</p>",
+    )
+
+
+@router.post("/ui/login")
+def login(token: str = Form(...), db: Session = Depends(session)) -> Response:
+    if not settings.operator_auth_token or not secrets.compare_digest(token, settings.operator_auth_token):
+        raise HTTPException(status_code=401, detail="invalid_operator_token")
+    operator = db.scalar(select(Operator).where(Operator.active.is_(True)).order_by(Operator.created_at))
+    if operator is None:
+        raise HTTPException(status_code=409, detail="active_operator_required")
+    raw = secrets.token_urlsafe(32)
+    csrf = secrets.token_urlsafe(24)
+    session_hash = hmac.new(settings.auth_secret.encode(), raw.encode(), hashlib.sha256).hexdigest()
+    csrf_hash = hashlib.sha256(csrf.encode()).hexdigest()
+    from datetime import timedelta
+
+    db.add(
+        OperatorSession(
+            operator_id=operator.id,
+            session_hash=session_hash,
+            csrf_hash=csrf_hash,
+            expires_at=datetime.now(UTC) + timedelta(hours=8),
+        )
+    )
+    db.commit()
+    response = RedirectResponse("/ui", status_code=303)
+    response.set_cookie(
+        "lboe_session", raw, httponly=True, secure=settings.secure_cookies, samesite="lax", max_age=28800
+    )
+    response.set_cookie(
+        "lboe_csrf", csrf, httponly=False, secure=settings.secure_cookies, samesite="lax", max_age=28800
+    )
+    return response
+
+
+@router.post("/ui/logout")
+def logout(request: Request, db: Session = Depends(session)) -> Response:
+    token = request.cookies.get("lboe_session")
+    if token:
+        session_hash = hmac.new(settings.auth_secret.encode(), token.encode(), hashlib.sha256).hexdigest()
+        row = db.scalar(select(OperatorSession).where(OperatorSession.session_hash == session_hash))
+        if row:
+            row.revoked_at = datetime.now(UTC)
+            db.commit()
+    response = RedirectResponse("/ui/login", status_code=303)
+    response.delete_cookie("lboe_session")
+    response.delete_cookie("lboe_csrf")
+    return response
 
 
 def esc(value: Any) -> str:
