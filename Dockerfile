@@ -17,7 +17,8 @@ RUN pip install --no-cache-dir \
     "alembic>=1.13" \
     "httpx>=0.27" \
     "playwright>=1.50" \
-    "beautifulsoup4>=4.12"
+    "beautifulsoup4>=4.12" \
+    "python-multipart>=0.0.9"
 
 COPY apps ./apps
 COPY packages ./packages
