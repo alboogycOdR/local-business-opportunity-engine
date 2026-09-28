@@ -147,3 +147,6 @@ Sprint 14 v5 adds a pilot operations console at `/ui/pilots`: configure a
 caps, generate a sanitized local export pack, and capture a retrospective.
 Dry-run mode is prominent and no automated sending, inbox sync, or CRM sync is
 introduced.
+
+Sprint 17–18 adds calibration visibility, decision-reason queues, and a
+second-batch scale-up pack. It does not change the no-sending boundary.

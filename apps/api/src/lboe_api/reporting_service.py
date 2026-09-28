@@ -256,6 +256,7 @@ def build_pilot_report(
             + sum(1 for item in businesses if item.id not in {website.business_id for website in websites}),
         },
         {"code": "score_count", "count": len(scores)},
+        {"code": "brief_count", "count": len(brief_ids)},
         {"code": "average_score", "count": round(sum(item.score for item in scores) / len(scores), 2) if scores else 0},
         {"code": "demo_generated", "count": len(demos)},
         {"code": "demo_qa_passed", "count": sum(1 for item in qa_runs if item.status == "passed")},

@@ -13,10 +13,16 @@ FastAPI workflow. It does not replace API validation or lifecycle guards.
 - `/ui/operators` and `/ui/my-queue` — trusted local operator workspace
 - `/ui/demos/{id}/preview` — controlled internal artifact preview
 - `/ui/pilots` — pilot configuration, readiness, caps, exports, and retrospective
+- `/ui/pilots/{id}/calibration` — read-only score/finding calibration view
+- `/ui/queues/no-demo-reason`, `/ui/queues/qa-failed`, `/ui/queues/not-outreach-ready`, `/ui/queues/weak-evidence` — decision-reason queues
 
 Pilot pages show dry-run versus active mode, require source-policy acknowledgement
 before readiness, and keep exports local under `LBOE_EXPORT_ROOT`. Dry-run is an
 operator UI guardrail; the underlying JSON logging APIs remain unchanged.
+
+Readiness failures include plain-language fix guidance. Lead detail exposes
+score components, holds, latest audit/brief references, and QA-failure warnings;
+QA-failed demos cannot be shared.
 
 The UI always shows that system delivery is disabled. Manual outreach remains
 an operator assertion and `system_delivery_count` remains zero.

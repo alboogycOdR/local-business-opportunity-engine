@@ -24,6 +24,10 @@ def test_operator_ui_pages_and_safety_banner() -> None:
             "/ui/queues",
             "/ui/queues/demo-review",
             "/ui/operators",
+            "/ui/queues/no-demo-reason",
+            "/ui/queues/qa-failed",
+            "/ui/queues/not-outreach-ready",
+            "/ui/queues/weak-evidence",
         ):
             response = client.get(path)
             assert response.status_code == 200, path
@@ -176,6 +180,7 @@ def test_pilot_console_config_readiness_and_retrospective() -> None:
         assert client.get(f"/ui/pilots/{pilot_id}").status_code == 200
         assert "DRY RUN MODE" in client.get(f"/ui/pilots/{pilot_id}").text
         assert client.get(f"/ui/pilots/{pilot_id}/readiness").status_code == 200
+        assert client.get(f"/ui/pilots/{pilot_id}/calibration").status_code == 200
         ack = client.post(
             f"/ui/pilots/{pilot_id}/acknowledge-source-policy",
             data={"acknowledgement_text": "I acknowledge the source policy."},

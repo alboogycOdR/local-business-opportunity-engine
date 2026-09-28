@@ -160,3 +160,34 @@ def test_brief_history_is_append_only() -> None:
             execute_brief(session, BusinessBriefRequest(business_id=business.id, idempotency_key="two"), business)
         )
         assert first.id != second.id
+
+
+def test_brief_normalizes_list_shaped_component_evidence() -> None:
+    engine = make_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        business = seeded_business(session, state="SCORED")
+        score = OpportunityScore(
+            business_id=business.id,
+            version="opportunity-v1",
+            score=70,
+            band="high",
+            recommended_next_action="generate_demo",
+        )
+        session.add(score)
+        session.flush()
+        session.add(
+            OpportunityComponent(
+                opportunity_score_id=score.id,
+                code="NO_WEBSITE",
+                category="gap",
+                points=20,
+                max_points=55,
+                evidence=[{"kind": "persisted"}],
+                source_type="audit",
+                confidence=0.8,
+            )
+        )
+        session.commit()
+        result = build_brief(session, business)
+        assert isinstance(result.opportunities[0].evidence, dict)

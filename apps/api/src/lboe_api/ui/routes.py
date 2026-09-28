@@ -16,18 +16,22 @@ from sqlalchemy.orm import Session
 
 from lboe_api.db import (
     AuditArtifact,
+    AuditRun,
     Business,
     BusinessBrief,
     Campaign,
     DemoArtifact,
     DemoPreviewAccessEvent,
     DemoPreviewLink,
+    DemoQaRun,
     GeneratedDemo,
     LeadCrmEvent,
     Operator,
     OperatorAssignment,
     OperatorAuditEvent,
     OperatorComment,
+    OpportunityComponent,
+    OpportunityHold,
     OpportunityScore,
     OutreachDraftPackage,
     PilotExportRun,
@@ -233,7 +237,7 @@ def business_detail(business_id: uuid.UUID, db: Session = Depends(session)) -> H
     ).all()
     demo_html = (
         "".join(
-            f"<li><a href='/ui/demos/{demo.id}/preview'>Demo {demo.id}</a> — {esc(demo.status)} <a href='/ui/demos/{demo.id}/preview-links'>preview links</a></li>"
+            f"<li><a href='/ui/demos/{demo.id}/preview'>Demo {demo.id}</a> — {esc(demo.status)} {('<strong>QA failed: inspect checks; regenerate or mark manual edit. Sharing blocked.</strong>' if demo.status == 'qa_failed' else '')} <a href='/ui/demos/{demo.id}/preview-links'>preview links</a></li>"
             for demo in demos
         )
         or "<li>None</li>"
@@ -250,11 +254,34 @@ def business_detail(business_id: uuid.UUID, db: Session = Depends(session)) -> H
     operators = db.scalars(select(Operator).where(Operator.active.is_(True))).all()
     operator_options = "".join(f"<option value='{op.id}'>{esc(op.display_name)}</option>" for op in operators)
     pilot = pilot_for_business(db, business.id)
+    score_components = (
+        db.scalars(select(OpportunityComponent).where(OpportunityComponent.opportunity_score_id == score.id)).all()
+        if score
+        else []
+    )
+    score_holds = (
+        db.scalars(select(OpportunityHold).where(OpportunityHold.opportunity_score_id == score.id)).all()
+        if score
+        else []
+    )
+    latest_audit = db.scalar(
+        select(AuditRun).where(AuditRun.business_id == business_id).order_by(AuditRun.completed_at.desc())
+    )
+    component_html = (
+        "".join(
+            f"<li>{esc(c.code)} · {c.points}/{c.max_points} points · confidence {c.confidence} · source {esc(c.source_type)} · evidence {len(c.evidence) if isinstance(c.evidence, (list, dict)) else 1}</li>"
+            for c in score_components
+        )
+        or "<li>None</li>"
+    )
+    hold_html = "".join(f"<li>{esc(h.code)} · {esc(h.reason)}</li>" for h in score_holds) or "<li>None</li>"
+    observability = f"<section><h2>Score observability</h2><p>Score: {score.score if score else '—'} · Band: {esc(score.band if score else '')} · Action: {esc(score.recommended_next_action if score else '')} · Latest audit: {esc(latest_audit.id if latest_audit else '—')} · Brief: {esc(brief.id if brief else '—')}</p><h3>Components</h3><ul>{component_html}</ul><h3>Holds</h3><ul>{hold_html}</ul></section>"
     pilot_banner = ""
     if pilot is not None:
         pilot_banner = f"<div class='safety'>{'DRY RUN MODE — manual outreach and CRM outcome logging are blocked by the operator console.' if pilot.mode == 'dry_run' else 'ACTIVE PILOT MODE — manual records represent operator activity; LBOE still sends nothing.'} <a href='/ui/pilots/{pilot.id}'>View pilot</a></div>"
     body = (
         pilot_banner
+        + observability
         + f"<p class='badge'>{esc(business.state)}</p><section><h2>Identity</h2><p>{esc(business.display_name)} · {esc(business.category)} · {esc(business.locality)}<br>{esc(business.address_text)}</p></section><section><h2>Score / brief</h2><p>Score: {score.score if score else '—'} ({esc(score.band if score else '')})<br>Recommended action: {esc(brief.recommended_next_action if brief else '—')}</p></section><section><h2>Demo / outreach</h2><p>{esc(package.status if package else 'No outreach draft')}</p><ul>{demo_html}</ul></section><section><h2>CRM events</h2><ul>{event_html}</ul></section><section><h2>Assignments</h2><ul>{''.join(f'<li>{a.operator_id} · {a.status}</li>' for a in assignments) or '<li>None</li>'}</ul><form method='post' action='/ui/businesses/{business_id}/assign'><select name='operator_id'>{operator_options}</select><button>Assign</button></form></section><section><h2>Operator notes</h2><ul>{comment_html}</ul><form method='post' action='/ui/businesses/{business_id}/comment'><textarea name='body' required placeholder='Append an operator note'></textarea><button>Add note</button></form></section><section><h2>Safe actions</h2><p>All workflow actions remain subject to backend lifecycle and suppression gates.</p><form method='post' action='/ui/businesses/{business_id}/suppress'><input name='reason' required placeholder='Suppression reason'><button>Suppress business</button></form></section>"
     )
     return page(business.display_name, body)
@@ -377,6 +404,14 @@ def queues(db: Session = Depends(session)) -> HTMLResponse:
 
 @router.get("/ui/queues/{queue_name}", response_class=HTMLResponse)
 def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLResponse:
+    if queue_name == "no-demo-reason":
+        return no_demo_reason_queue(db)
+    if queue_name == "qa-failed":
+        return qa_failed_queue(db)
+    if queue_name == "not-outreach-ready":
+        return not_outreach_ready_queue(db)
+    if queue_name == "weak-evidence":
+        return weak_evidence_queue(db)
     mapping = {
         "demo-review": (
             "Demo review",
@@ -402,6 +437,81 @@ def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLRespons
             f"<li><a href='/ui/businesses/{business_id}'>{esc(business.display_name if business else business_id)}</a></li>"
         )
     return page(title, "<ul>" + "".join(rows) + "</ul>")
+
+
+def _reason_queue(title: str, items: list[tuple[Business, str, str]]) -> HTMLResponse:
+    rows = (
+        "".join(
+            f"<tr><td><a href='/ui/businesses/{b.id}'>{esc(b.display_name)}</a></td><td>{esc(b.state)}</td><td>{esc(reason)}</td><td>{esc(next_action)}</td></tr>"
+            for b, reason, next_action in items
+        )
+        or "<tr><td colspan='4'>No items</td></tr>"
+    )
+    return page(
+        title,
+        "<table><tr><th>Business</th><th>State</th><th>Blocking reason</th><th>Safe next action</th></tr>"
+        + rows
+        + "</table>",
+    )
+
+
+@router.get("/ui/queues/no-demo-reason", response_class=HTMLResponse)
+def no_demo_reason_queue(db: Session = Depends(session)) -> HTMLResponse:
+    items = []
+    for business in db.scalars(select(Business)).all():
+        score = db.scalar(
+            select(OpportunityScore)
+            .where(OpportunityScore.business_id == business.id)
+            .order_by(OpportunityScore.created_at.desc())
+        )
+        demo = db.scalar(
+            select(GeneratedDemo)
+            .where(GeneratedDemo.business_id == business.id)
+            .order_by(GeneratedDemo.created_at.desc())
+        )
+        if score and demo is None:
+            items.append((business, score.recommended_next_action, "audit, manual review, or score-only follow-up"))
+    return _reason_queue("Why no demo", items)
+
+
+@router.get("/ui/queues/qa-failed", response_class=HTMLResponse)
+def qa_failed_queue(db: Session = Depends(session)) -> HTMLResponse:
+    items = []
+    for demo in db.scalars(select(GeneratedDemo).where(GeneratedDemo.status == "qa_failed")).all():
+        business = db.get(Business, demo.business_id)
+        if business:
+            qa = db.scalar(select(DemoQaRun).where(DemoQaRun.demo_id == demo.id).order_by(DemoQaRun.created_at.desc()))
+            failed = (
+                ", ".join(str(k) for k, v in (qa.checks if qa else {}).items() if v is False)
+                or "QA failed; inspect stored checks"
+            )
+            items.append((business, failed, "regenerate or mark manual edit; do not share"))
+    return _reason_queue("QA-failed demos", items)
+
+
+@router.get("/ui/queues/not-outreach-ready", response_class=HTMLResponse)
+def not_outreach_ready_queue(db: Session = Depends(session)) -> HTMLResponse:
+    items = []
+    for business in db.scalars(select(Business)).all():
+        if business.state in {"APPROVED_FOR_OUTREACH", "CONSENT_PENDING"}:
+            items.append(
+                (business, "consent/readiness not complete", "review draft, consent basis, and suppression gates")
+            )
+    return _reason_queue("Not outreach-ready", items)
+
+
+@router.get("/ui/queues/weak-evidence", response_class=HTMLResponse)
+def weak_evidence_queue(db: Session = Depends(session)) -> HTMLResponse:
+    items = []
+    for business in db.scalars(select(Business)).all():
+        score = db.scalar(
+            select(OpportunityScore)
+            .where(OpportunityScore.business_id == business.id)
+            .order_by(OpportunityScore.created_at.desc())
+        )
+        if score and score.recommended_next_action in {"manual_review", "audit_required", "score_only"}:
+            items.append((business, score.recommended_next_action, "verify business-owned evidence before any demo"))
+    return _reason_queue("Weak evidence", items)
 
 
 @router.post("/ui/bulk", response_class=HTMLResponse)
@@ -727,12 +837,14 @@ def pilot_create(
 def pilot_detail(pilot_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
     p = _pilot(db, pilot_id)
     c = counters(db, p)
+    report = build_pilot_report(db, campaign_id=p.campaign_id)
+    counts = {item["code"]: item["count"] for item in report["quality_metrics"]}
     banner = (
         "DRY RUN MODE — no real outreach should be logged."
         if p.mode == "dry_run"
         else "ACTIVE PILOT MODE — manual outreach records represent operator activity."
     )
-    body = f"<div class='safety'>{banner}</div><p>Status: <strong>{p.status}</strong> · Mode: <strong>{p.mode}</strong></p><div class='cards'><div class='card'>Businesses {c['businesses']} / {p.max_businesses}</div><div class='card'>Demos today {c['demos_today']} / {p.daily_demo_cap}</div><div class='card'>Preview links {c['preview_links_today']} / {p.daily_preview_link_cap}</div><div class='card'>Contacts {c['manual_contacts_today']} / {p.daily_manual_contact_cap}</div></div><p><a class='button' href='/ui/pilots/{p.id}/readiness'>Readiness</a> <a class='button' href='/ui/pilots/{p.id}/exports'>Exports</a> <a class='button' href='/ui/pilots/{p.id}/retrospective'>Retrospective</a></p>"
+    body = f"<div class='safety'>{banner}</div><p>Status: <strong>{p.status}</strong> · Mode: <strong>{p.mode}</strong></p><div class='cards'><div class='card'>Businesses {c['businesses']} / {p.max_businesses}</div><div class='card'>Audited {counts.get('audit_runs', 0)}</div><div class='card'>Scored {counts.get('score_count', 0)}</div><div class='card'>Briefs {counts.get('brief_count', 0)}</div><div class='card'>Demos {counts.get('demo_generated', 0)}</div><div class='card'>QA failed {counts.get('demo_qa_failed', 0)}</div><div class='card'>Approved demos {counts.get('approved_demos', 0)}</div><div class='card'>Outreach ready {next((x['count'] for x in report['funnel_metrics'] if x['stage'] == 'OUTREACH_READY'), 0)}</div><div class='card'>Demos today {c['demos_today']} / {p.daily_demo_cap}</div><div class='card'>Preview links {c['preview_links_today']} / {p.daily_preview_link_cap}</div><div class='card'>Contacts {c['manual_contacts_today']} / {p.daily_manual_contact_cap}</div><div class='card'>System delivery 0</div></div><p><a class='button' href='/ui/pilots/{p.id}/readiness'>Readiness</a> <a class='button' href='/ui/pilots/{p.id}/calibration'>Calibration</a> <a class='button' href='/ui/pilots/{p.id}/exports'>Exports</a> <a class='button' href='/ui/pilots/{p.id}/retrospective'>Retrospective</a></p>"
     if p.status == "draft":
         body += f"<form method='post' action='/ui/pilots/{p.id}/mark-ready'><button>Mark ready</button></form>"
     if p.status == "ready":
@@ -783,6 +895,22 @@ def pilot_update(
     return RedirectResponse(f"/ui/pilots/{pilot.id}", status_code=303)
 
 
+@router.get("/ui/pilots/{pilot_id}/calibration", response_class=HTMLResponse)
+def pilot_calibration(pilot_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+    pilot = _pilot(db, pilot_id)
+    report = build_pilot_report(db, campaign_id=pilot.campaign_id, include_details=True)
+    quality = {item["code"]: item["count"] for item in report["quality_metrics"]}
+    rows = "".join(
+        f"<tr><td>{esc(key)}</td><td>{esc(value)}</td></tr>"
+        for key, value in sorted(quality.items())
+        if key.startswith(("score_band:", "score_action:", "audit_finding:"))
+    )
+    return page(
+        "Pilot calibration",
+        f"<p>Read-only calibration view for {esc(pilot.name)}. Use evidence to adjust future weights; do not interpret score as business quality.</p><table><tr><th>Signal</th><th>Count</th></tr>{rows}</table><p>QA failures must be reviewed before sharing. No automated sending is available.</p>",
+    )
+
+
 @router.get("/ui/pilots/{pilot_id}/readiness", response_class=HTMLResponse)
 def pilot_readiness(pilot_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
     p = _pilot(db, pilot_id)
@@ -792,9 +920,36 @@ def pilot_readiness(pilot_id: uuid.UUID, db: Session = Depends(session)) -> HTML
         for c in summary["checks"]
     )
     form = f"<form method='post' action='/ui/pilots/{p.id}/acknowledge-source-policy'><textarea name='acknowledgement_text' required>I acknowledge the pilot source policy and will not resell raw data or send automated messages.</textarea><button>Acknowledge source policy</button></form>"
+    guidance = {
+        "operator_available": (
+            "No active operator is configured.",
+            "Create or activate an operator before marking this pilot ready.",
+            "/ui/operators",
+        ),
+        "source_policy_acknowledged": (
+            "The source policy has not been acknowledged for this pilot version.",
+            "Acknowledge the matching policy version below.",
+            f"/ui/pilots/{p.id}/readiness",
+        ),
+        "system_delivery_zero": (
+            "System delivery count must remain zero.",
+            "Investigate immediately if this check fails.",
+            "/ui/reports/pilot",
+        ),
+    }
+    guidance_rows = "".join(
+        f"<li><strong>{esc(item['code'])}</strong>: {esc(guidance[item['code']][0])} Fix: {esc(guidance[item['code']][1])} <a href='{guidance[item['code']][2]}'>Open</a></li>"
+        for item in summary["checks"]
+        if item["result"] != "pass" and item["code"] in guidance
+    )
+    guidance_html = (
+        f"<h2>Fix guidance</h2><ul>{guidance_rows}</ul>"
+        if guidance_rows
+        else "<p>All readiness checks have passed.</p>"
+    )
     return page(
         "Pilot readiness",
-        f"<p>Ready: <strong>{summary['ready']}</strong></p><table><tr><th>Check</th><th>Result</th><th>Class</th></tr>{rows}</table>{form}",
+        f"<p>Ready: <strong>{summary['ready']}</strong></p><table><tr><th>Check</th><th>Result</th><th>Class</th></tr>{rows}</table>{guidance_html}{form}",
     )
 
 

@@ -20,3 +20,7 @@ Pilot exports and artifacts use local filesystem storage. There is no public
 hosting, automated sending, inbox/CRM sync, legal compliance determination, or
 operator web authentication. Manual assertions are trusted as operator-entered
 facts and templates are deterministic.
+
+Calibration remains descriptive until reply/meeting data exists; the first real
+pilot had no manual contacts. Batch-2 profiles are operator configuration
+artifacts and are not automatically loaded or launched.
