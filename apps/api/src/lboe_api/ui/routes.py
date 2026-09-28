@@ -163,39 +163,89 @@ def metric_cards(report: dict[str, Any]) -> str:
 
 
 def map_panel(campaign: Any, businesses: Sequence[Business]) -> str:
-    """Render a lightweight geographic canvas without requiring a map API key."""
-    markers = []
-    for index, business in enumerate(businesses[:40]):
-        left = 12 + ((index * 37) % 78)
-        top = 18 + ((index * 53) % 64)
-        markers.append(
-            f"<a class='map-marker' style='left:{left}%;top:{top}%' title='{esc(business.display_name)}' href='/ui/businesses/{business.id}' aria-label='Open {esc(business.display_name)}'></a>"
-        )
+    """Render a real Google Maps view with a safe local lead fallback."""
     geography = esc(getattr(campaign, "geography", None) or "Campaign area")
     query = (getattr(campaign, "geography", None) or "") + " " + (getattr(campaign, "vertical", None) or "")
+    maps_query = __import__("urllib.parse", fromlist=["quote_plus"]).quote_plus(query)
     maps_url = "https://www.google.com/maps/search/?api=1&query=" + __import__(
         "urllib.parse", fromlist=["quote_plus"]
     ).quote_plus(query)
-    marker_html = (
-        "".join(markers)
-        or "<div class='empty-state' style='position:absolute;inset:35px;z-index:2'>Run discovery to place businesses on this map.</div>"
+    lead_links = (
+        "".join(
+            f"<a class='map-lead' href='/ui/businesses/{business.id}'><span class='map-dot'></span><span>{esc(business.display_name)}</span><small>{esc(business.state)}</small></a>"
+            for business in businesses[:8]
+        )
+        or "<p class='muted'>Run discovery to add businesses to this campaign.</p>"
     )
-    return f"<div class='map-shell'><div class='map-label'>Live campaign area - {geography}</div>{marker_html}<div class='map-legend'><strong>{len(businesses)}</strong> businesses - approximate operator view - <a href='{maps_url}' target='_blank' rel='noreferrer'>Open Google Maps</a></div></div>"
+    return (
+        f"<div class='map-shell'><iframe class='map-iframe' src='https://www.google.com/maps?q={maps_query}&output=embed' loading='lazy' referrerpolicy='no-referrer-when-downgrade' title='Google Maps view of {geography}'></iframe>"
+        f"<div class='map-overlay'><div class='map-label'>Campaign area · {geography}</div><div class='map-context'><strong>Geographic view</strong><span>Open the full map for live Google Maps pins.</span></div><a class='button button-secondary map-open' href='{maps_url}' target='_blank' rel='noreferrer'>Open full map</a></div></div>"
+        f"<div class='map-leads'><div class='section-head'><div><h3>Leads in this area</h3><p class='muted'>Select a lead to see evidence and the next action.</p></div><span class='badge'>{len(businesses)} businesses</span></div><div class='map-lead-list'>{lead_links}</div></div>"
+    )
+
+
+def next_action_panel(report: dict[str, Any]) -> str:
+    counts = {item["stage"]: item["count"] for item in report["funnel_metrics"]}
+    if counts.get("REVIEW_PENDING", 0):
+        title, copy, href, label = (
+            "Review demos",
+            "Approved concepts are waiting for a human decision.",
+            "/ui/queues",
+            "Open review queue",
+        )
+    elif counts.get("OUTREACH_READY", 0):
+        title, copy, href, label = (
+            "Ready for manual outreach",
+            "A lead has passed the readiness gate. Review the approved channel before recording contact.",
+            "/ui/queues",
+            "Open readiness queue",
+        )
+    elif counts.get("CONTACTED", 0):
+        title, copy, href, label = (
+            "Log the next response",
+            "Keep the funnel current with a reply, meeting, or no-response note.",
+            "/ui/queues",
+            "Open CRM queue",
+        )
+    elif counts.get("DISCOVERED", 0):
+        title, copy, href, label = (
+            "Start with your discovered leads",
+            "Open a campaign, inspect the map, then work the highest-signal lead first.",
+            "/ui/campaigns",
+            "Open campaigns",
+        )
+    else:
+        title, copy, href, label = (
+            "Create your first campaign",
+            "Choose a geography and vertical to begin the operator workflow.",
+            "/ui/campaigns",
+            "Create campaign",
+        )
+    return f"<section class='next-action'><div><span class='eyebrow'>Recommended next step</span><h2>{title}</h2><p>{copy}</p></div><a class='button button-primary' href='{href}'>{label}</a></section>"
 
 
 @router.get("/ui", response_class=HTMLResponse)
 def dashboard(db: Session = Depends(session)) -> HTMLResponse:
     report = build_pilot_report(db)
     quality = {item["code"]: item["count"] for item in report["quality_metrics"]}
-    campaign = db.scalar(select(Campaign).order_by(Campaign.created_at.desc()))
+    campaigns = db.scalars(select(Campaign).order_by(Campaign.created_at.desc())).all()
+    campaign = max(
+        campaigns,
+        key=lambda item: (
+            len(db.scalars(select(Business).where(Business.campaign_id == item.id)).all()),
+            item.created_at,
+        ),
+        default=None,
+    )
     campaign_businesses = (
         db.scalars(select(Business).where(Business.campaign_id == campaign.id).order_by(Business.display_name)).all()
         if campaign
         else []
     )
     body = (
-        "<div class='hero'><div class='hero-copy'><div class='eyebrow'>Field operations console</div><h1>Turn a map of businesses into your next best action.</h1><p>Start with a campaign, scan the geography, then move each lead through evidence, score, demo, proposal, and delivery.</p></div><div class='hero-actions'><a class='button button-primary' href='/ui/campaigns'>Open campaigns</a><a class='button button-secondary' href='/ui/queues'>View queues</a></div></div>"
+        "<div class='hero'><div class='hero-copy'><div class='eyebrow'>Field operations console</div><h1>Turn a map of businesses into your next best action.</h1><p>Start with a campaign, inspect the map, and work each lead through evidence, score, demo, proposal, and delivery.</p></div><div class='hero-actions'><a class='button button-primary' href='/ui/campaigns'>Open campaigns</a><a class='button button-secondary' href='/ui/queues'>View queues</a></div></div>"
         + metric_cards(report)
+        + next_action_panel(report)
         + f"<div class='layout-grid'><section class='section'><div class='section-head'><div><div class='eyebrow'>Geographic view</div><h2>{esc(campaign.name) if campaign else 'Your campaign map'}</h2></div><a class='button button-secondary' href='/ui/campaigns'>Manage campaigns</a></div>{map_panel(campaign, campaign_businesses) if campaign else map_panel(type('CampaignView', (), {'geography': 'Choose a geography', 'vertical': 'local business'})(), [])}</section><section class='section'><div class='eyebrow'>Today</div><h2>What needs attention</h2><div class='stat-line'><span>System delivery</span><strong>{quality.get('system_delivery_count', 0)}</strong></div><div class='stat-line'><span>Failed / blocked jobs</span><strong>{quality.get('jobs_failed', quality.get('jobs_failed_or_not_eligible', 0))}</strong></div><div class='stat-line'><span>Approved demos</span><strong>{quality.get('approved_demos', 0)}</strong></div><div class='stat-line'><span>Proposal-ready</span><strong>{quality.get('proposal_ready_queue_count', 0)}</strong></div><p class='muted'>Every action is operator-controlled. LBOE never sends messages.</p></section></div>"
     )
     return page("Pilot dashboard", body)
@@ -204,26 +254,36 @@ def dashboard(db: Session = Depends(session)) -> HTMLResponse:
 @router.get("/ui/campaigns", response_class=HTMLResponse)
 def campaigns(db: Session = Depends(session)) -> HTMLResponse:
     rows = []
+    seen: set[tuple[str, str, str | None]] = set()
     for campaign in db.scalars(
         select(__import__("lboe_api.db", fromlist=["Campaign"]).Campaign).order_by(
             __import__("lboe_api.db", fromlist=["Campaign"]).Campaign.created_at.desc()
         )
     ).all():
+        key = (campaign.name, campaign.vertical, campaign.geography)
+        if key in seen:
+            continue
+        seen.add(key)
         count = (
             db.scalar(select(Business).where(Business.campaign_id == campaign.id).count())
             if False
             else len(db.scalars(select(Business).where(Business.campaign_id == campaign.id)).all())
         )
         rows.append(
-            f"<tr><td><a href='/ui/campaigns/{campaign.id}'>{esc(campaign.name)}</a></td><td>{esc(campaign.vertical)}</td><td>{esc(campaign.geography)}</td><td>{count}</td><td>{esc(campaign.created_at)}</td></tr>"
+            f"<tr><td><a class='table-primary' href='/ui/campaigns/{campaign.id}'>{esc(campaign.name)}</a><small class='table-sub'>Latest run · {esc(campaign.created_at)}</small></td><td>{esc(campaign.vertical)}</td><td>{esc(campaign.geography)}</td><td><strong>{count}</strong></td><td><a class='button button-small button-secondary' href='/ui/campaigns/{campaign.id}'>Open workspace</a></td></tr>"
         )
     table = (
-        "<table><tr><th>Campaign</th><th>Vertical</th><th>Geography</th><th>Businesses</th><th>Created</th></tr>"
+        "<table><tr><th>Campaign</th><th>Vertical</th><th>Geography</th><th>Leads</th><th></th></tr>"
         + "".join(rows)
         + "</table>"
     )
-    form = "<h2>Create campaign</h2><form method='post' action='/ui/campaigns'><input name='name' placeholder='Campaign name' required><input name='vertical' placeholder='Vertical' required><input name='geography' placeholder='Geography'><button>Create</button></form>"
-    return page("Campaigns", table + form)
+    form = "<section class='section create-panel'><div><span class='eyebrow'>New workspace</span><h2>Start a campaign</h2><p class='muted'>Choose the market you want to work. You can add discovery results after the campaign is created.</p></div><form method='post' action='/ui/campaigns'><input name='name' placeholder='Campaign name' required><input name='vertical' placeholder='Vertical' required><input name='geography' placeholder='Geography'><button class='button-primary'>Create campaign</button></form></section>"
+    return page(
+        "Campaigns",
+        "<div class='page-intro'><div><span class='eyebrow'>Workspaces</span><h1>Campaigns</h1><p class='muted'>One workspace per market. Open a campaign to see its map and lead queue.</p></div></div>"
+        + table
+        + form,
+    )
 
 
 @router.post("/ui/campaigns")
