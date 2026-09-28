@@ -13,6 +13,8 @@ The `/ui/opportunities` page is the fastest way to answer that question. Cards c
 
 Cards are a UI projection over existing records. They do not modify scoring, approve outreach, or send messages. Suppressed and ambiguous records remain visibly blocked so the operator understands why no action is available.
 
+Review Gap Opportunity cards use stored rating and review-count observations, plus conservative comparisons to same-campaign peers. They help an operator decide whether to inspect the evidence; they do not assert ranking changes, customer loss, or revenue outcomes.
+
 ## Safety boundary
 
-LBOE does not send email, WhatsApp, SMS, or CRM messages. Proposal packs are not contracts, and delivery approvals are operator assertions rather than e-signatures.
+LBOE does not send email, WhatsApp, SMS, review requests, or CRM messages. Proposal packs are not contracts, and delivery approvals are operator assertions rather than e-signatures.

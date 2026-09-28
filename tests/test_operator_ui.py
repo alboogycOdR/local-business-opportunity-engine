@@ -67,6 +67,77 @@ def test_no_website_queue_and_campaign_filter() -> None:
         assert "View opportunity" in opportunities.text
 
 
+def test_review_gap_opportunity_card_and_peer_evidence() -> None:
+    from datetime import UTC, datetime
+
+    from lboe_api.db import SourceObservation
+    from lboe_api.main import SessionLocal
+
+    with TestClient(app) as client:
+        campaign = client.post(
+            "/v1/campaigns", json={"name": "Review Gap UI", "vertical": "gym", "geography": "Cape Town"}
+        ).json()
+        imported = client.post(
+            f"/v1/campaigns/{campaign['id']}/import",
+            json={
+                "format": "json",
+                "records": [
+                    {"display_name": "Weak Profile Gym", "category": "gym", "locality": "Cape Town"},
+                    {"display_name": "Stronger Peer Gym", "category": "gym", "locality": "Cape Town"},
+                ],
+            },
+        ).json()
+        weak_id = imported["successes"][0]["business_id"]
+        peer_id = imported["successes"][1]["business_id"]
+        with SessionLocal() as session:
+            now = datetime.now(UTC)
+            for business_id, field, value in (
+                (weak_id, "rating", "3.6"),
+                (weak_id, "review_count", "18"),
+                (peer_id, "rating", "4.4"),
+                (peer_id, "review_count", "125"),
+            ):
+                session.add(
+                    SourceObservation(
+                        business_id=__import__("uuid").UUID(business_id),
+                        field=field,
+                        source_type="manual_test",
+                        source_ref="test-fixture",
+                        observed_at=now,
+                        storage_policy="persistent",
+                        confidence=0.9,
+                        value=value,
+                    )
+                )
+            session.commit()
+        response = client.get("/ui/opportunities")
+        assert response.status_code == 200
+        assert "Weak Profile Gym" in response.text
+        assert "Review Gap Opportunity" in response.text
+        assert "Rating: 3.6" in response.text
+        assert "Reviews: 18" in response.text
+        assert "Stronger Peer Gym shows 4.4 stars" in response.text
+        assert "losing" not in response.text.lower()
+        assert "increase revenue" not in response.text.lower()
+
+
+def test_review_gap_suppression_blocks_sales_action() -> None:
+    with TestClient(app) as client:
+        campaign = client.post("/v1/campaigns", json={"name": "Review Safety UI", "vertical": "gym"}).json()
+        imported = client.post(
+            f"/v1/campaigns/{campaign['id']}/import",
+            json={"format": "json", "records": [{"display_name": "Suppressed Review Gym", "category": "gym"}]},
+        ).json()
+        business_id = imported["successes"][0]["business_id"]
+        client.post(f"/ui/businesses/{business_id}/suppress", data={"reason": "review safety test"})
+        html = client.get("/ui/opportunities").text
+        start = html.index("Suppressed Review Gym")
+        card = html[start : start + 900]
+        assert "No action" in card
+        assert "Generate Proposal" not in card
+        assert "Prepare Outreach" not in card
+
+
 def test_ui_suppression_is_audited() -> None:
     with TestClient(app) as client:
         campaign = client.post("/v1/campaigns", json={"name": "UI Safety", "vertical": "salon"}).json()

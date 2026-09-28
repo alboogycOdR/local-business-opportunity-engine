@@ -51,6 +51,7 @@ from lboe_api.db import (
     PilotRun,
     PilotSourcePolicyAcknowledgement,
     ProposalPackage,
+    SourceObservation,
     SuppressionEntry,
     Website,
 )
@@ -136,7 +137,7 @@ def esc(value: Any) -> str:
 
 def page(title: str, body: str) -> HTMLResponse:
     return HTMLResponse(
-        f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{esc(title)} · LBOE</title><link rel='stylesheet' href='/ui/static/ui.css'></head><body><header><a href='/ui'><strong>LBOE Operator Cockpit</strong></a><nav><a href='/ui'>Dashboard</a><a href='/ui/opportunities'>Opportunities</a><a href='/ui/campaigns'>Campaigns</a><a href='/ui/queues'>Queues</a><a href='/ui/queues/proposal-ready'>Proposals</a><a href='/ui/queues/delivery'>Delivery</a><a href='/ui/pilots'>Pilots</a><a href='/ui/reports/pilot'>Reports</a><a href='/ui/operators'>Admin</a><a href='/ui/system'>System</a></nav></header><div class='safety'>System delivery is disabled. LBOE does not send email, WhatsApp, SMS, or CRM messages.</div><main><p class='muted'><a href='/ui'>Dashboard</a> / {esc(title)}</p><h1>{esc(title)}</h1>{body}</main></body></html>"""
+        f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{esc(title)} · LBOE</title><link rel='stylesheet' href='/ui/static/ui.css'></head><body><header><a href='/ui'><strong>LBOE Operator Cockpit</strong></a><nav><a href='/ui'>Dashboard</a><a href='/ui/opportunities'>Opportunities</a><a href='/ui/campaigns'>Campaigns</a><a href='/ui/queues'>Queues</a><a href='/ui/queues/proposal-ready'>Proposals</a><a href='/ui/queues/delivery'>Delivery</a><a href='/ui/pilots'>Pilots</a><a href='/ui/reports/pilot'>Reports</a><a href='/ui/operators'>Admin</a><a href='/ui/system'>System</a></nav></header><div class='safety'>System delivery is disabled. LBOE does not send email, WhatsApp, SMS, review requests, or CRM messages.</div><main><p class='muted'><a href='/ui'>Dashboard</a> / {esc(title)}</p><h1>{esc(title)}</h1>{body}</main></body></html>"""
     )
 
 
@@ -162,6 +163,42 @@ def metric_cards(report: dict[str, Any]) -> str:
         )
         + "</div>"
     )
+
+
+def _review_metrics(db: Session, business_id: uuid.UUID) -> dict[str, float | int | None]:
+    """Read optional rating/review-count facts without changing the canonical model."""
+
+    observations = db.scalars(
+        select(SourceObservation)
+        .where(SourceObservation.business_id == business_id)
+        .order_by(SourceObservation.observed_at.desc())
+    ).all()
+    rating: float | None = None
+    review_count: int | None = None
+    for observation in observations:
+        field = observation.field.casefold().replace("-", "_")
+        raw = observation.value
+        if raw is None:
+            continue
+        if rating is None and (field in {"rating", "review_rating", "reviews_rating"} or field.endswith(".rating")):
+            try:
+                candidate = float(str(raw).replace(",", ".").strip())
+            except ValueError:
+                candidate = -1
+            if 0 <= candidate <= 5:
+                rating = candidate
+        if review_count is None and (
+            field in {"review_count", "reviews", "reviews_count", "rating_count"} or field.endswith(".review_count")
+        ):
+            try:
+                candidate_count = int(float(str(raw).replace(",", "").strip()))
+            except ValueError:
+                candidate_count = -1
+            if candidate_count >= 0:
+                review_count = candidate_count
+        if rating is not None and review_count is not None:
+            break
+    return {"rating": rating, "review_count": review_count}
 
 
 def build_opportunity_cards(db: Session, limit: int = 20) -> list[dict[str, Any]]:
@@ -198,7 +235,55 @@ def build_opportunity_cards(db: Session, limit: int = 20) -> list[dict[str, Any]
 
     cards: list[dict[str, Any]] = []
     businesses = db.scalars(select(Business).order_by(Business.updated_at.desc(), Business.display_name)).all()
+    review_metrics = {business.id: _review_metrics(db, business.id) for business in businesses}
     for business in businesses:
+        own_review = review_metrics[business.id]
+        peers = [
+            (peer, review_metrics[peer.id])
+            for peer in businesses
+            if peer.id != business.id
+            and peer.campaign_id == business.campaign_id
+            and (not business.category or not peer.category or peer.category.casefold() == business.category.casefold())
+            and (not business.locality or not peer.locality or peer.locality.casefold() == business.locality.casefold())
+            and (review_metrics[peer.id]["rating"] is not None or review_metrics[peer.id]["review_count"] is not None)
+        ]
+        review_evidence: list[str] = []
+        own_rating = own_review["rating"]
+        own_count = own_review["review_count"]
+        if isinstance(own_rating, float) and own_rating < 4.0:
+            review_evidence.append(f"Rating: {own_rating:.1f}")
+        if isinstance(own_count, int) and own_count < 25:
+            review_evidence.append(f"Reviews: {own_count}")
+        peer_rating = max(
+            (peer_metrics["rating"] for _peer, peer_metrics in peers if isinstance(peer_metrics["rating"], float)),
+            default=None,
+        )
+        if isinstance(own_rating, float) and isinstance(peer_rating, float) and peer_rating - own_rating >= 0.4:
+            peer = next(peer for peer, metrics in peers if metrics["rating"] == peer_rating)
+            review_evidence.append(
+                f"Peer comparison: {peer.display_name} shows {peer_rating:.1f} stars vs {own_rating:.1f}"
+            )
+        peer_count = max(
+            (
+                peer_metrics["review_count"]
+                for _peer, peer_metrics in peers
+                if isinstance(peer_metrics["review_count"], int)
+            ),
+            default=None,
+        )
+        if (
+            isinstance(own_count, int)
+            and isinstance(peer_count, int)
+            and peer_count >= own_count * 2
+            and peer_count >= own_count + 20
+        ):
+            peer = next(peer for peer, metrics in peers if metrics["review_count"] == peer_count)
+            review_evidence.append(f"Peer comparison: {peer.display_name} shows {peer_count} reviews vs {own_count}")
+        review_gap = bool(review_evidence) and (
+            (isinstance(own_rating, float) and own_rating < 4.0)
+            or (isinstance(own_count, int) and own_count < 25)
+            or any("Peer comparison" in item for item in review_evidence)
+        )
         score = db.scalar(
             select(OpportunityScore)
             .where(OpportunityScore.business_id == business.id)
@@ -247,7 +332,9 @@ def build_opportunity_cards(db: Session, limit: int = 20) -> list[dict[str, Any]
             else []
         )
         reasons: list[str] = []
-        if website is None:
+        if review_gap:
+            reasons.extend(review_evidence)
+        if website is None and len(reasons) < 4:
             reasons.append("No website found")
         for component in components:
             label = component_labels.get(component.code)
@@ -286,6 +373,10 @@ def build_opportunity_cards(db: Session, limit: int = 20) -> list[dict[str, Any]
             offer = "Starter Website" if demo.demo_type == "starter_website" else "Conversion Upgrade"
             next_label = "Review concept"
             next_url = f"/ui/demos/{demo.id}/preview"
+        elif review_gap:
+            offer = "Review Gap Opportunity"
+            next_label = "Review evidence"
+            next_url = f"/ui/businesses/{business.id}"
         elif website is None:
             offer = "Starter Website"
             next_label = "View opportunity"
@@ -332,6 +423,10 @@ def build_opportunity_cards(db: Session, limit: int = 20) -> list[dict[str, Any]
                 "confidence_label": confidence,
                 "recommended_offer": offer,
                 "reasons": reasons[:4],
+                "competitor_evidence": review_evidence[:3],
+                "review_gap": review_gap,
+                "review_rating": own_rating,
+                "review_count": own_count,
                 "blockers": blockers[:3],
                 "blocked": blocked,
                 "next_action_label": next_label,
@@ -351,6 +446,13 @@ def opportunity_cards_html(cards: list[dict[str, Any]]) -> str:
     for card in cards:
         score = f"Score {card['score']}" if card["score"] is not None else "Not scored"
         reasons = "".join(f"<li>✓ {esc(reason)}</li>" for reason in card["reasons"])
+        competitor_evidence = (
+            "<div class='competitor-evidence'><strong>Peer comparison</strong><ul>"
+            + "".join(f"<li>{esc(item)}</li>" for item in card.get("competitor_evidence", []))
+            + "</ul></div>"
+            if card.get("competitor_evidence")
+            else ""
+        )
         blockers = (
             f"<div class='opportunity-blocker'><strong>Blocked:</strong> {esc('; '.join(card['blockers']))}</div>"
             if card["blockers"]
@@ -362,7 +464,7 @@ def opportunity_cards_html(cards: list[dict[str, Any]]) -> str:
             else ""
         )
         rendered.append(
-            f"<article class='opportunity-card'><div class='opportunity-card-top'><span class='badge'>{esc(card['confidence_label'])}</span><span class='opportunity-score'>{esc(score)}</span></div><h2><a href='{esc(card['detail_url'])}'>{esc(card['business_name'])}</a></h2><p class='muted'>{esc(card['locality'])} · {esc(card['state'].replace('_', ' ').title())}</p><div class='opportunity-offer'><span>Recommended offer</span><strong>{esc(card['recommended_offer'])}</strong></div><h3>Why this matters</h3><ul class='opportunity-reasons'>{reasons or '<li>Evidence is still being collected</li>'}</ul>{blockers}<div class='opportunity-actions'>{action}<a class='button button-secondary button-small' href='{esc(card['detail_url'])}'>View details</a></div></article>"
+            f"<article class='opportunity-card'><div class='opportunity-card-top'><span class='badge'>{esc(card['confidence_label'])}</span><span class='opportunity-score'>{esc(score)}</span></div><h2><a href='{esc(card['detail_url'])}'>{esc(card['business_name'])}</a></h2><p class='muted'>{esc(card['locality'])} · {esc(card['state'].replace('_', ' ').title())}</p><div class='opportunity-offer'><span>Recommended offer</span><strong>{esc(card['recommended_offer'])}</strong></div><h3>Why this matters</h3><ul class='opportunity-reasons'>{reasons or '<li>Evidence is still being collected</li>'}</ul>{competitor_evidence}{blockers}<div class='opportunity-actions'>{action}<a class='button button-secondary button-small' href='{esc(card['detail_url'])}'>View details</a></div></article>"
         )
     return "<div class='opportunity-grid'>" + "".join(rendered) + "</div>"
 
@@ -466,7 +568,7 @@ def opportunities(db: Session = Depends(session)) -> HTMLResponse:
     body = (
         "<div class='page-intro'><div><span class='eyebrow'>Revenue focus</span><h1>Opportunity Cards</h1><p class='muted'>Find the next best operator action in under five seconds. Each card combines the business, the reason it matters, the best-fit offer, confidence, and a safe next step.</p></div><span class='badge'>Operator-controlled</span></div>"
         "<div class='notice'><strong>How to use this page:</strong> start with the highest-signal card, open the recommended safe action, and verify the evidence before preparing a proposal or delivery step.</div>"
-        "<p class='muted opportunity-safety'>LBOE does not send email, WhatsApp, SMS, or CRM messages. All contact happens manually outside LBOE.<br>Proposal packs are not contracts. Delivery approvals are operator assertions, not e-signatures.</p>"
+        "<p class='muted opportunity-safety'>Review Gap Opportunities identify businesses whose review profile may look weaker than comparable local or campaign peers. LBOE does not send email, WhatsApp, SMS, review requests, or CRM messages. All outreach and review work happens manually outside LBOE.<br>Proposal packs are not contracts. Delivery approvals are operator assertions, not e-signatures.</p>"
         + opportunity_cards_html(cards)
     )
     return page("Opportunity Cards", body)

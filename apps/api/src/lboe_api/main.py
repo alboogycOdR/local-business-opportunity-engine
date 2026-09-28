@@ -2271,6 +2271,8 @@ def import_candidates(
             ("identity.category", row.get("category")),
             ("identity.locality", row.get("locality")),
             ("identity.address_text", row.get("address_text")),
+            ("review.rating", row.get("rating") or row.get("review_rating")),
+            ("review.review_count", row.get("review_count") or row.get("reviews") or row.get("reviews_count")),
         ):
             if value:
                 session.add(SourceObservation(field=field, value=str(value), **common))
