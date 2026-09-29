@@ -34,4 +34,6 @@ class Settings(BaseSettings):
     s3_secret_access_key: str | None = None
     s3_region: str = "auto"
     signed_url_ttl_seconds: int = 900
+    # Operator-facing times are rendered in this IANA zone (storage stays UTC).
+    display_timezone: str = "Africa/Johannesburg"
     model_config = SettingsConfigDict(env_prefix="LBOE_", extra="ignore")
