@@ -2077,9 +2077,7 @@ def proposal_ready_queue(db: Session = Depends(session)) -> HTMLResponse:
         f'<li><a href="/ui/proposals/{p.id}">{html.escape(str(p.business_id))}</a> — {html.escape(p.status)}</li>'
         for p in proposals
     )
-    return HTMLResponse(
-        f"<html><body><h1>Proposal-ready queue</h1><ul>{rows or '<li>Queue empty.</li>'}</ul></body></html>"
-    )
+    return page("Proposal-ready queue", f"<ul>{rows or '<li>Queue empty.</li>'}</ul>")
 
 
 @router.get("/ui/businesses/{business_id}/delivery", response_class=HTMLResponse)
@@ -2096,8 +2094,9 @@ def delivery_for_business(business_id: uuid.UUID, db: Session = Depends(session)
         f'<li><a href="/ui/delivery-projects/{p.id}">{html.escape(p.title)}</a> — {html.escape(p.status)}</li>'
         for p in projects
     )
-    return HTMLResponse(
-        f"<html><body><h1>Delivery: {html.escape(business.display_name)}</h1><p>LBOE does not store credentials. Use an approved password manager. Approval records are operator assertions, not e-signatures.</p><ul>{rows or '<li>No delivery projects.</li>'}</ul></body></html>"
+    return page(
+        f"Delivery: {business.display_name}",
+        f"<p>LBOE does not store credentials. Use an approved password manager. Approval records are operator assertions, not e-signatures.</p><ul>{rows or '<li>No delivery projects.</li>'}</ul>",
     )
 
 
@@ -2114,8 +2113,9 @@ def delivery_detail(project_id: uuid.UUID, db: Session = Depends(session)) -> HT
         f"<li>{html.escape(i.category)} / {html.escape(i.code)}: {html.escape(i.status)}</li>" for i in items
     )
     marks = "".join(f"<li>{html.escape(m.milestone_type)}: {html.escape(m.status)}</li>" for m in milestones)
-    return HTMLResponse(
-        f"<html><body><h1>{html.escape(project.title)}</h1><p>Status: {html.escape(project.status)}</p><p>Safety: no credentials, payments, contracts, or automated deployment are stored here.</p><h2>Checklist</h2><ul>{checks}</ul><h2>Milestones</h2><ul>{marks}</ul></body></html>"
+    return page(
+        project.title,
+        f"<p>Status: {html.escape(project.status)}</p><p>Safety: no credentials, payments, contracts, or automated deployment are stored here.</p><h2>Checklist</h2><ul>{checks}</ul><h2>Milestones</h2><ul>{marks}</ul>",
     )
 
 
@@ -2130,7 +2130,7 @@ def delivery_queue(db: Session = Depends(session)) -> HTMLResponse:
         f'<li><a href="/ui/delivery-projects/{p.id}">{html.escape(p.title)}</a> — {html.escape(p.status)}</li>'
         for p in projects
     )
-    return HTMLResponse(f"<html><body><h1>Delivery queue</h1><ul>{rows or '<li>Queue empty.</li>'}</ul></body></html>")
+    return page("Delivery queue", f"<ul>{rows or '<li>Queue empty.</li>'}</ul>")
 
 
 @router.get("/ui/system", response_class=HTMLResponse)
