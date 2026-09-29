@@ -1,0 +1,51 @@
+diff --git a/apps/api/src/lboe_api/ui/routes.py b/apps/api/src/lboe_api/ui/routes.py
+index 937c9ab..85b217c 100644
+--- a/apps/api/src/lboe_api/ui/routes.py
++++ b/apps/api/src/lboe_api/ui/routes.py
+@@ -1123,6 +1123,37 @@ def business_detail(
+     if pilot is not None:
+         pilot_banner = f"<div class='notice'>{'DRY RUN pilot — this is a rehearsal. Do not contact businesses or record real outreach for it.' if pilot.mode == 'dry_run' else 'ACTIVE pilot — manual records represent real operator activity; LBOE still sends nothing.'} <a href='/ui/pilots/{pilot.id}'>View pilot</a></div>"
+     next_action_button = ""
++    # Once a lead is in the human-gated part of the pipeline, the pending decision is the
++    # next step - not the score-driven offer, which would suggest automated work instead.
++    stage_decisions = {
++        "REVIEW_PENDING": (
++            "Review the concept preview",
++            "A concept passed QA and needs your decision.",
++            "Review concept",
++        ),
++        "APPROVED_FOR_OUTREACH": (
++            "Prepare outreach drafts",
++            "The concept is approved. Draft copy for your review; nothing is sent.",
++            "Prepare drafts",
++        ),
++        "CONSENT_PENDING": (
++            "Decide whether you may contact them",
++            "Record the basis for contact, or decline. Listing details are not consent.",
++            "Make consent decision",
++        ),
++        "OUTREACH_READY": (
++            "Contact them yourself, then record it",
++            "LBOE never sends. Use the approved draft outside LBOE and record what you did.",
++            "Record contact",
++        ),
++        "CONTACTED": ("Record their response", "Log a reply, no response, or a loss.", "Record outcome"),
++        "REPLIED": ("Record the next outcome", "Log a scheduled meeting or a loss.", "Record outcome"),
++        "MEETING": ("Record the next outcome", "Log that a proposal was sent, or a loss.", "Record outcome"),
++        "PROPOSAL": ("Record the result", "Log a win or a loss.", "Record outcome"),
++    }
++    stage_decision = None if suppressed else stage_decisions.get(business.state)
++    if stage_decision is not None:
++        action_title, action_reason = stage_decision[0], stage_decision[1]
+     if suppressed:
+         action_title = "Suppressed — do not contact"
+         action_reason = "No pipeline actions are available for a suppressed business."
+@@ -1131,6 +1162,8 @@ def business_detail(
+     # return ``brief_required`` from the API.
+     if suppressed:
+         pass
++    elif stage_decision is not None:
++        next_action_button = f"<a class='button button-primary' href='#workflow'>{esc(stage_decision[2])}</a>"
+     elif raw_action == "audit_required" and latest_audit is None:
+         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='audit'><button class='button-primary'>Run website audit</button></form>"
+     elif evidence_needs_refresh:

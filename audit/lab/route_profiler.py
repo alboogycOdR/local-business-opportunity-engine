@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import os
 import statistics
 import sys
 import time
@@ -21,7 +22,8 @@ import warnings
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[2])  # code under test
+os.chdir(ROOT)  # static files are mounted relative to the working directory
 sys.path[:0] = [
     str(ROOT / "apps/api/src"),
     str(ROOT / "packages/domain/src"),

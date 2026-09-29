@@ -97,5 +97,95 @@
     "pg_connections_baseline": 0,
     "pg_connections_peak": 15,
     "pg_connections_after": 15
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 200,
+    "concurrency": 1,
+    "statuses": {
+      "200": 200
+    },
+    "throughput_rps": 35.5,
+    "p50_ms": 25.8,
+    "p95_ms": 31.9,
+    "max_ms": 443.9,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 2,
+    "pg_connections_after": 2
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 200,
+    "concurrency": 2,
+    "statuses": {
+      "200": 200
+    },
+    "throughput_rps": 51.6,
+    "p50_ms": 35.2,
+    "p95_ms": 44.8,
+    "max_ms": 322.7,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 3,
+    "pg_connections_after": 3
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 200,
+    "concurrency": 5,
+    "statuses": {
+      "200": 200
+    },
+    "throughput_rps": 46.8,
+    "p50_ms": 98.4,
+    "p95_ms": 133.6,
+    "max_ms": 348.1,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 7,
+    "pg_connections_after": 5
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 200,
+    "concurrency": 10,
+    "statuses": {
+      "200": 200
+    },
+    "throughput_rps": 43.5,
+    "p50_ms": 209.9,
+    "p95_ms": 282.3,
+    "max_ms": 632.9,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 12,
+    "pg_connections_after": 5
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 200,
+    "concurrency": 20,
+    "statuses": {
+      "200": 200
+    },
+    "throughput_rps": 43.5,
+    "p50_ms": 396.8,
+    "p95_ms": 802.8,
+    "max_ms": 942.9,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 15,
+    "pg_connections_after": 5
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 200,
+    "concurrency": 30,
+    "statuses": {
+      "200": 200
+    },
+    "throughput_rps": 41.0,
+    "p50_ms": 670.3,
+    "p95_ms": 1032.9,
+    "max_ms": 1311.4,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 15,
+    "pg_connections_after": 5
   }
 ]

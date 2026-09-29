@@ -1,0 +1,2251 @@
+{
+ "reports": {
+  "campaign": {
+   "campaign_id": "0cab5c81-9e38-4308-8450-00bf9f1ba919",
+   "conversion_metrics": [
+    {
+     "code": "discovered_to_deduped",
+     "denominator": 800,
+     "numerator": 0,
+     "rate": 0.0
+    },
+    {
+     "code": "deduped_to_qualified",
+     "denominator": 0,
+     "numerator": 0,
+     "rate": null
+    },
+    {
+     "code": "contacted_to_replied",
+     "denominator": 16,
+     "numerator": 21,
+     "rate": 1.3125
+    },
+    {
+     "code": "replied_to_meeting",
+     "denominator": 0,
+     "numerator": 21,
+     "rate": null
+    },
+    {
+     "code": "meeting_to_proposal",
+     "denominator": 0,
+     "numerator": 21,
+     "rate": null
+    },
+    {
+     "code": "proposal_to_won",
+     "denominator": 20,
+     "numerator": 0,
+     "rate": 0.0
+    }
+   ],
+   "details": {
+    "common_audit_findings": {
+     "BOOKING_PATH": 78,
+     "CLICK_TO_CALL": 78,
+     "CONTACT_FORM": 78,
+     "DNS_FAILURE": 8,
+     "H1_PRESENT": 78,
+     "HTTP_ERROR": 9,
+     "IMAGE_ALT_COVERAGE": 78,
+     "META_DESCRIPTION_PRESENT": 78,
+     "SERVICE_CATALOGUE": 78,
+     "TITLE_PRESENT": 78,
+     "VIEWPORT_META_PRESENT": 78,
+     "WEBSITE_HEALTHY": 78,
+     "WEBSITE_UNREACHABLE": 12,
+     "WHATSAPP_CTA": 78
+    },
+    "jobs_failed_or_not_eligible": {
+     "GENERATE_DEMO:failed": 47,
+     "GENERATE_DEMO:not_eligible": 12
+    },
+    "transitions": {
+     "APPROVED_FOR_OUTREACH->CONSENT_PENDING": 76,
+     "APPROVED_FOR_OUTREACH->SUPPRESSED": 3,
+     "AUDITED->SCORED": 200,
+     "AUDITING->AUDITED": 200,
+     "CONSENT_PENDING->OUTREACH_READY": 55,
+     "CONSENT_PENDING->SUPPRESSED": 2,
+     "CONTACTED->REPLIED": 21,
+     "CONTACTED->SUPPRESSED": 2,
+     "DEMO_GENERATED->REVIEW_PENDING": 112,
+     "DEMO_QUEUED->DEMO_GENERATED": 112,
+     "DISCOVERED->AUDITING": 200,
+     "MEETING->PROPOSAL": 21,
+     "NONE->DISCOVERED": 1000,
+     "OUTREACH_READY->CONTACTED": 39,
+     "OUTREACH_READY->SUPPRESSED": 2,
+     "PROPOSAL->SUPPRESSED": 1,
+     "REPLIED->MEETING": 21,
+     "REVIEW_PENDING->APPROVED_FOR_OUTREACH": 94,
+     "REVIEW_PENDING->SUPPRESSED": 2,
+     "SCORED->DEMO_QUEUED": 112,
+     "SCORED->SUPPRESSED": 10
+    }
+   },
+   "end_date": null,
+   "funnel_metrics": [
+    {
+     "count": 800,
+     "stage": "DISCOVERED"
+    },
+    {
+     "count": 0,
+     "stage": "DEDUPED"
+    },
+    {
+     "count": 0,
+     "stage": "QUALIFIED"
+    },
+    {
+     "count": 0,
+     "stage": "ENRICHED"
+    },
+    {
+     "count": 0,
+     "stage": "AUDITED"
+    },
+    {
+     "count": 78,
+     "stage": "SCORED"
+    },
+    {
+     "count": 0,
+     "stage": "DEMO_GENERATED"
+    },
+    {
+     "count": 16,
+     "stage": "REVIEW_PENDING"
+    },
+    {
+     "count": 15,
+     "stage": "APPROVED_FOR_OUTREACH"
+    },
+    {
+     "count": 19,
+     "stage": "CONSENT_PENDING"
+    },
+    {
+     "count": 14,
+     "stage": "OUTREACH_READY"
+    },
+    {
+     "count": 16,
+     "stage": "CONTACTED"
+    },
+    {
+     "count": 0,
+     "stage": "REPLIED"
+    },
+    {
+     "count": 0,
+     "stage": "MEETING"
+    },
+    {
+     "count": 20,
+     "stage": "PROPOSAL"
+    },
+    {
+     "count": 0,
+     "stage": "WON"
+    },
+    {
+     "count": 0,
+     "stage": "LOST"
+    },
+    {
+     "count": 22,
+     "stage": "SUPPRESSED"
+    },
+    {
+     "count": 0,
+     "stage": "ARCHIVED"
+    }
+   ],
+   "limitations": [
+    "Metrics are computed live from append-only operational tables.",
+    "Manual outreach logs represent operator assertions; system delivery is always zero.",
+    "Current funnel counts reflect current business state, while transition metrics use recorded events."
+   ],
+   "quality_metrics": [
+    {
+     "code": "businesses_discovered",
+     "count": 1000
+    },
+    {
+     "code": "duplicates",
+     "count": 0
+    },
+    {
+     "code": "ambiguous_candidates",
+     "count": 0
+    },
+    {
+     "code": "unresolved_candidates",
+     "count": 0
+    },
+    {
+     "code": "source_observations",
+     "count": 6978
+    },
+    {
+     "code": "external_identities",
+     "count": 0
+    },
+    {
+     "code": "audit_runs",
+     "count": 200
+    },
+    {
+     "code": "website_healthy",
+     "count": 78
+    },
+    {
+     "code": "website_unreachable",
+     "count": 12
+    },
+    {
+     "code": "website_missing",
+     "count": 800
+    },
+    {
+     "code": "score_count",
+     "count": 600
+    },
+    {
+     "code": "brief_count",
+     "count": 600
+    },
+    {
+     "code": "average_score",
+     "count": 72.11
+    },
+    {
+     "code": "demo_generated",
+     "count": 159
+    },
+    {
+     "code": "demo_qa_passed",
+     "count": 112
+    },
+    {
+     "code": "demo_qa_failed",
+     "count": 47
+    },
+    {
+     "code": "approved_demos",
+     "count": 94
+    },
+    {
+     "code": "outreach_drafts_ready",
+     "count": 76
+    },
+    {
+     "code": "outreach_drafts_blocked",
+     "count": 0
+    },
+    {
+     "code": "readiness_reviews",
+     "count": 131
+    },
+    {
+     "code": "manual_outreach_logs",
+     "count": 39
+    },
+    {
+     "code": "system_delivery_count",
+     "count": 0
+    },
+    {
+     "code": "proposal_packages_created",
+     "count": 21
+    },
+    {
+     "code": "proposal_approved",
+     "count": 21
+    },
+    {
+     "code": "proposal_exported",
+     "count": 0
+    },
+    {
+     "code": "proposal_ready_queue_count",
+     "count": 0
+    },
+    {
+     "code": "suppression_entries",
+     "count": 22
+    },
+    {
+     "code": "do_not_contact_holds",
+     "count": 0
+    },
+    {
+     "code": "score_band:high",
+     "count": 314
+    },
+    {
+     "code": "score_band:low",
+     "count": 36
+    },
+    {
+     "code": "score_band:medium",
+     "count": 250
+    },
+    {
+     "code": "score_action:archive",
+     "count": 42
+    },
+    {
+     "code": "score_action:audit_required",
+     "count": 208
+    },
+    {
+     "code": "score_action:conversion_upgrade_offer",
+     "count": 105
+    },
+    {
+     "code": "score_action:generate_demo",
+     "count": 243
+    },
+    {
+     "code": "score_action:score_only",
+     "count": 2
+    },
+    {
+     "code": "audit_finding:BOOKING_PATH",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:CLICK_TO_CALL",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:CONTACT_FORM",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:DNS_FAILURE",
+     "count": 8
+    },
+    {
+     "code": "audit_finding:H1_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:HTTP_ERROR",
+     "count": 9
+    },
+    {
+     "code": "audit_finding:IMAGE_ALT_COVERAGE",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:META_DESCRIPTION_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:SERVICE_CATALOGUE",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:TITLE_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:VIEWPORT_META_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:WEBSITE_HEALTHY",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:WEBSITE_UNREACHABLE",
+     "count": 12
+    },
+    {
+     "code": "audit_finding:WHATSAPP_CTA",
+     "count": 78
+    },
+    {
+     "code": "crm_event:meeting_scheduled",
+     "count": 21
+    },
+    {
+     "code": "crm_event:proposal_sent",
+     "count": 21
+    },
+    {
+     "code": "crm_event:reply_received",
+     "count": 21
+    },
+    {
+     "code": "job:GENERATE_DEMO:failed",
+     "count": 47
+    },
+    {
+     "code": "job:GENERATE_DEMO:not_eligible",
+     "count": 12
+    },
+    {
+     "code": "selected_channel:email",
+     "count": 55
+    },
+    {
+     "code": "execution_channel:email",
+     "count": 39
+    }
+   ],
+   "start_date": null,
+   "vertical": "hair-salon",
+   "warnings": [],
+   "workload_metrics": [
+    {
+     "category": "crm_event",
+     "count": 63,
+     "operator": "lab-operator"
+    },
+    {
+     "category": "demo_review",
+     "count": 94,
+     "operator": "lab-operator"
+    },
+    {
+     "category": "manual_outreach",
+     "count": 39,
+     "operator": "lab-operator"
+    },
+    {
+     "category": "readiness_review",
+     "count": 131,
+     "operator": "lab-operator"
+    }
+   ]
+  },
+  "campaign_window": {
+   "campaign_id": "0cab5c81-9e38-4308-8450-00bf9f1ba919",
+   "conversion_metrics": [
+    {
+     "code": "discovered_to_deduped",
+     "denominator": 800,
+     "numerator": 0,
+     "rate": 0.0
+    },
+    {
+     "code": "deduped_to_qualified",
+     "denominator": 0,
+     "numerator": 0,
+     "rate": null
+    },
+    {
+     "code": "contacted_to_replied",
+     "denominator": 16,
+     "numerator": 21,
+     "rate": 1.3125
+    },
+    {
+     "code": "replied_to_meeting",
+     "denominator": 0,
+     "numerator": 21,
+     "rate": null
+    },
+    {
+     "code": "meeting_to_proposal",
+     "denominator": 0,
+     "numerator": 21,
+     "rate": null
+    },
+    {
+     "code": "proposal_to_won",
+     "denominator": 20,
+     "numerator": 0,
+     "rate": 0.0
+    }
+   ],
+   "details": {},
+   "end_date": "2026-12-31",
+   "funnel_metrics": [
+    {
+     "count": 800,
+     "stage": "DISCOVERED"
+    },
+    {
+     "count": 0,
+     "stage": "DEDUPED"
+    },
+    {
+     "count": 0,
+     "stage": "QUALIFIED"
+    },
+    {
+     "count": 0,
+     "stage": "ENRICHED"
+    },
+    {
+     "count": 0,
+     "stage": "AUDITED"
+    },
+    {
+     "count": 78,
+     "stage": "SCORED"
+    },
+    {
+     "count": 0,
+     "stage": "DEMO_GENERATED"
+    },
+    {
+     "count": 16,
+     "stage": "REVIEW_PENDING"
+    },
+    {
+     "count": 15,
+     "stage": "APPROVED_FOR_OUTREACH"
+    },
+    {
+     "count": 19,
+     "stage": "CONSENT_PENDING"
+    },
+    {
+     "count": 14,
+     "stage": "OUTREACH_READY"
+    },
+    {
+     "count": 16,
+     "stage": "CONTACTED"
+    },
+    {
+     "count": 0,
+     "stage": "REPLIED"
+    },
+    {
+     "count": 0,
+     "stage": "MEETING"
+    },
+    {
+     "count": 20,
+     "stage": "PROPOSAL"
+    },
+    {
+     "count": 0,
+     "stage": "WON"
+    },
+    {
+     "count": 0,
+     "stage": "LOST"
+    },
+    {
+     "count": 22,
+     "stage": "SUPPRESSED"
+    },
+    {
+     "count": 0,
+     "stage": "ARCHIVED"
+    }
+   ],
+   "limitations": [
+    "Metrics are computed live from append-only operational tables.",
+    "Manual outreach logs represent operator assertions; system delivery is always zero.",
+    "Current funnel counts reflect current business state, while transition metrics use recorded events."
+   ],
+   "quality_metrics": [
+    {
+     "code": "businesses_discovered",
+     "count": 1000
+    },
+    {
+     "code": "duplicates",
+     "count": 0
+    },
+    {
+     "code": "ambiguous_candidates",
+     "count": 0
+    },
+    {
+     "code": "unresolved_candidates",
+     "count": 0
+    },
+    {
+     "code": "source_observations",
+     "count": 6978
+    },
+    {
+     "code": "external_identities",
+     "count": 0
+    },
+    {
+     "code": "audit_runs",
+     "count": 200
+    },
+    {
+     "code": "website_healthy",
+     "count": 78
+    },
+    {
+     "code": "website_unreachable",
+     "count": 12
+    },
+    {
+     "code": "website_missing",
+     "count": 800
+    },
+    {
+     "code": "score_count",
+     "count": 600
+    },
+    {
+     "code": "brief_count",
+     "count": 600
+    },
+    {
+     "code": "average_score",
+     "count": 72.11
+    },
+    {
+     "code": "demo_generated",
+     "count": 159
+    },
+    {
+     "code": "demo_qa_passed",
+     "count": 112
+    },
+    {
+     "code": "demo_qa_failed",
+     "count": 47
+    },
+    {
+     "code": "approved_demos",
+     "count": 94
+    },
+    {
+     "code": "outreach_drafts_ready",
+     "count": 76
+    },
+    {
+     "code": "outreach_drafts_blocked",
+     "count": 0
+    },
+    {
+     "code": "readiness_reviews",
+     "count": 131
+    },
+    {
+     "code": "manual_outreach_logs",
+     "count": 39
+    },
+    {
+     "code": "system_delivery_count",
+     "count": 0
+    },
+    {
+     "code": "proposal_packages_created",
+     "count": 21
+    },
+    {
+     "code": "proposal_approved",
+     "count": 21
+    },
+    {
+     "code": "proposal_exported",
+     "count": 0
+    },
+    {
+     "code": "proposal_ready_queue_count",
+     "count": 0
+    },
+    {
+     "code": "suppression_entries",
+     "count": 22
+    },
+    {
+     "code": "do_not_contact_holds",
+     "count": 0
+    },
+    {
+     "code": "score_band:high",
+     "count": 314
+    },
+    {
+     "code": "score_band:low",
+     "count": 36
+    },
+    {
+     "code": "score_band:medium",
+     "count": 250
+    },
+    {
+     "code": "score_action:archive",
+     "count": 42
+    },
+    {
+     "code": "score_action:audit_required",
+     "count": 208
+    },
+    {
+     "code": "score_action:conversion_upgrade_offer",
+     "count": 105
+    },
+    {
+     "code": "score_action:generate_demo",
+     "count": 243
+    },
+    {
+     "code": "score_action:score_only",
+     "count": 2
+    },
+    {
+     "code": "audit_finding:BOOKING_PATH",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:CLICK_TO_CALL",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:CONTACT_FORM",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:DNS_FAILURE",
+     "count": 8
+    },
+    {
+     "code": "audit_finding:H1_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:HTTP_ERROR",
+     "count": 9
+    },
+    {
+     "code": "audit_finding:IMAGE_ALT_COVERAGE",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:META_DESCRIPTION_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:SERVICE_CATALOGUE",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:TITLE_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:VIEWPORT_META_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:WEBSITE_HEALTHY",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:WEBSITE_UNREACHABLE",
+     "count": 12
+    },
+    {
+     "code": "audit_finding:WHATSAPP_CTA",
+     "count": 78
+    },
+    {
+     "code": "crm_event:meeting_scheduled",
+     "count": 21
+    },
+    {
+     "code": "crm_event:proposal_sent",
+     "count": 21
+    },
+    {
+     "code": "crm_event:reply_received",
+     "count": 21
+    },
+    {
+     "code": "job:GENERATE_DEMO:failed",
+     "count": 47
+    },
+    {
+     "code": "job:GENERATE_DEMO:not_eligible",
+     "count": 12
+    },
+    {
+     "code": "selected_channel:email",
+     "count": 55
+    },
+    {
+     "code": "execution_channel:email",
+     "count": 39
+    }
+   ],
+   "start_date": "2026-01-01",
+   "vertical": "hair-salon",
+   "warnings": [],
+   "workload_metrics": [
+    {
+     "category": "crm_event",
+     "count": 63,
+     "operator": "lab-operator"
+    },
+    {
+     "category": "demo_review",
+     "count": 94,
+     "operator": "lab-operator"
+    },
+    {
+     "category": "manual_outreach",
+     "count": 39,
+     "operator": "lab-operator"
+    },
+    {
+     "category": "readiness_review",
+     "count": 131,
+     "operator": "lab-operator"
+    }
+   ]
+  },
+  "empty_window": {
+   "campaign_id": null,
+   "conversion_metrics": [
+    {
+     "code": "discovered_to_deduped",
+     "denominator": 0,
+     "numerator": 0,
+     "rate": null
+    },
+    {
+     "code": "deduped_to_qualified",
+     "denominator": 0,
+     "numerator": 0,
+     "rate": null
+    },
+    {
+     "code": "contacted_to_replied",
+     "denominator": 0,
+     "numerator": 0,
+     "rate": null
+    },
+    {
+     "code": "replied_to_meeting",
+     "denominator": 0,
+     "numerator": 0,
+     "rate": null
+    },
+    {
+     "code": "meeting_to_proposal",
+     "denominator": 0,
+     "numerator": 0,
+     "rate": null
+    },
+    {
+     "code": "proposal_to_won",
+     "denominator": 0,
+     "numerator": 0,
+     "rate": null
+    }
+   ],
+   "details": {},
+   "end_date": "2020-01-02",
+   "funnel_metrics": [
+    {
+     "count": 0,
+     "stage": "DISCOVERED"
+    },
+    {
+     "count": 0,
+     "stage": "DEDUPED"
+    },
+    {
+     "count": 0,
+     "stage": "QUALIFIED"
+    },
+    {
+     "count": 0,
+     "stage": "ENRICHED"
+    },
+    {
+     "count": 0,
+     "stage": "AUDITED"
+    },
+    {
+     "count": 0,
+     "stage": "SCORED"
+    },
+    {
+     "count": 0,
+     "stage": "DEMO_GENERATED"
+    },
+    {
+     "count": 0,
+     "stage": "REVIEW_PENDING"
+    },
+    {
+     "count": 0,
+     "stage": "APPROVED_FOR_OUTREACH"
+    },
+    {
+     "count": 0,
+     "stage": "CONSENT_PENDING"
+    },
+    {
+     "count": 0,
+     "stage": "OUTREACH_READY"
+    },
+    {
+     "count": 0,
+     "stage": "CONTACTED"
+    },
+    {
+     "count": 0,
+     "stage": "REPLIED"
+    },
+    {
+     "count": 0,
+     "stage": "MEETING"
+    },
+    {
+     "count": 0,
+     "stage": "PROPOSAL"
+    },
+    {
+     "count": 0,
+     "stage": "WON"
+    },
+    {
+     "count": 0,
+     "stage": "LOST"
+    },
+    {
+     "count": 0,
+     "stage": "SUPPRESSED"
+    },
+    {
+     "count": 0,
+     "stage": "ARCHIVED"
+    }
+   ],
+   "limitations": [
+    "Metrics are computed live from append-only operational tables.",
+    "Manual outreach logs represent operator assertions; system delivery is always zero.",
+    "Current funnel counts reflect current business state, while transition metrics use recorded events."
+   ],
+   "quality_metrics": [
+    {
+     "code": "businesses_discovered",
+     "count": 0
+    },
+    {
+     "code": "duplicates",
+     "count": 0
+    },
+    {
+     "code": "ambiguous_candidates",
+     "count": 0
+    },
+    {
+     "code": "unresolved_candidates",
+     "count": 0
+    },
+    {
+     "code": "source_observations",
+     "count": 0
+    },
+    {
+     "code": "external_identities",
+     "count": 0
+    },
+    {
+     "code": "audit_runs",
+     "count": 0
+    },
+    {
+     "code": "website_healthy",
+     "count": 0
+    },
+    {
+     "code": "website_unreachable",
+     "count": 0
+    },
+    {
+     "code": "website_missing",
+     "count": 0
+    },
+    {
+     "code": "score_count",
+     "count": 0
+    },
+    {
+     "code": "brief_count",
+     "count": 0
+    },
+    {
+     "code": "average_score",
+     "count": 0
+    },
+    {
+     "code": "demo_generated",
+     "count": 0
+    },
+    {
+     "code": "demo_qa_passed",
+     "count": 0
+    },
+    {
+     "code": "demo_qa_failed",
+     "count": 0
+    },
+    {
+     "code": "approved_demos",
+     "count": 0
+    },
+    {
+     "code": "outreach_drafts_ready",
+     "count": 0
+    },
+    {
+     "code": "outreach_drafts_blocked",
+     "count": 0
+    },
+    {
+     "code": "readiness_reviews",
+     "count": 0
+    },
+    {
+     "code": "manual_outreach_logs",
+     "count": 0
+    },
+    {
+     "code": "system_delivery_count",
+     "count": 0
+    },
+    {
+     "code": "proposal_packages_created",
+     "count": 0
+    },
+    {
+     "code": "proposal_approved",
+     "count": 0
+    },
+    {
+     "code": "proposal_exported",
+     "count": 0
+    },
+    {
+     "code": "proposal_ready_queue_count",
+     "count": 0
+    },
+    {
+     "code": "suppression_entries",
+     "count": 0
+    },
+    {
+     "code": "do_not_contact_holds",
+     "count": 0
+    }
+   ],
+   "start_date": "2020-01-01",
+   "vertical": null,
+   "warnings": [
+    "No businesses matched the selected filters."
+   ],
+   "workload_metrics": []
+  },
+  "global": {
+   "campaign_id": null,
+   "conversion_metrics": [
+    {
+     "code": "discovered_to_deduped",
+     "denominator": 800,
+     "numerator": 0,
+     "rate": 0.0
+    },
+    {
+     "code": "deduped_to_qualified",
+     "denominator": 0,
+     "numerator": 0,
+     "rate": null
+    },
+    {
+     "code": "contacted_to_replied",
+     "denominator": 16,
+     "numerator": 21,
+     "rate": 1.3125
+    },
+    {
+     "code": "replied_to_meeting",
+     "denominator": 0,
+     "numerator": 21,
+     "rate": null
+    },
+    {
+     "code": "meeting_to_proposal",
+     "denominator": 0,
+     "numerator": 21,
+     "rate": null
+    },
+    {
+     "code": "proposal_to_won",
+     "denominator": 20,
+     "numerator": 0,
+     "rate": 0.0
+    }
+   ],
+   "details": {},
+   "end_date": null,
+   "funnel_metrics": [
+    {
+     "count": 800,
+     "stage": "DISCOVERED"
+    },
+    {
+     "count": 0,
+     "stage": "DEDUPED"
+    },
+    {
+     "count": 0,
+     "stage": "QUALIFIED"
+    },
+    {
+     "count": 0,
+     "stage": "ENRICHED"
+    },
+    {
+     "count": 0,
+     "stage": "AUDITED"
+    },
+    {
+     "count": 78,
+     "stage": "SCORED"
+    },
+    {
+     "count": 0,
+     "stage": "DEMO_GENERATED"
+    },
+    {
+     "count": 16,
+     "stage": "REVIEW_PENDING"
+    },
+    {
+     "count": 15,
+     "stage": "APPROVED_FOR_OUTREACH"
+    },
+    {
+     "count": 19,
+     "stage": "CONSENT_PENDING"
+    },
+    {
+     "count": 14,
+     "stage": "OUTREACH_READY"
+    },
+    {
+     "count": 16,
+     "stage": "CONTACTED"
+    },
+    {
+     "count": 0,
+     "stage": "REPLIED"
+    },
+    {
+     "count": 0,
+     "stage": "MEETING"
+    },
+    {
+     "count": 20,
+     "stage": "PROPOSAL"
+    },
+    {
+     "count": 0,
+     "stage": "WON"
+    },
+    {
+     "count": 0,
+     "stage": "LOST"
+    },
+    {
+     "count": 22,
+     "stage": "SUPPRESSED"
+    },
+    {
+     "count": 0,
+     "stage": "ARCHIVED"
+    }
+   ],
+   "limitations": [
+    "Metrics are computed live from append-only operational tables.",
+    "Manual outreach logs represent operator assertions; system delivery is always zero.",
+    "Current funnel counts reflect current business state, while transition metrics use recorded events."
+   ],
+   "quality_metrics": [
+    {
+     "code": "businesses_discovered",
+     "count": 1000
+    },
+    {
+     "code": "duplicates",
+     "count": 0
+    },
+    {
+     "code": "ambiguous_candidates",
+     "count": 0
+    },
+    {
+     "code": "unresolved_candidates",
+     "count": 0
+    },
+    {
+     "code": "source_observations",
+     "count": 6978
+    },
+    {
+     "code": "external_identities",
+     "count": 0
+    },
+    {
+     "code": "audit_runs",
+     "count": 200
+    },
+    {
+     "code": "website_healthy",
+     "count": 78
+    },
+    {
+     "code": "website_unreachable",
+     "count": 12
+    },
+    {
+     "code": "website_missing",
+     "count": 800
+    },
+    {
+     "code": "score_count",
+     "count": 600
+    },
+    {
+     "code": "brief_count",
+     "count": 600
+    },
+    {
+     "code": "average_score",
+     "count": 72.11
+    },
+    {
+     "code": "demo_generated",
+     "count": 159
+    },
+    {
+     "code": "demo_qa_passed",
+     "count": 112
+    },
+    {
+     "code": "demo_qa_failed",
+     "count": 47
+    },
+    {
+     "code": "approved_demos",
+     "count": 94
+    },
+    {
+     "code": "outreach_drafts_ready",
+     "count": 76
+    },
+    {
+     "code": "outreach_drafts_blocked",
+     "count": 0
+    },
+    {
+     "code": "readiness_reviews",
+     "count": 131
+    },
+    {
+     "code": "manual_outreach_logs",
+     "count": 39
+    },
+    {
+     "code": "system_delivery_count",
+     "count": 0
+    },
+    {
+     "code": "proposal_packages_created",
+     "count": 21
+    },
+    {
+     "code": "proposal_approved",
+     "count": 21
+    },
+    {
+     "code": "proposal_exported",
+     "count": 0
+    },
+    {
+     "code": "proposal_ready_queue_count",
+     "count": 0
+    },
+    {
+     "code": "suppression_entries",
+     "count": 22
+    },
+    {
+     "code": "do_not_contact_holds",
+     "count": 0
+    },
+    {
+     "code": "score_band:high",
+     "count": 314
+    },
+    {
+     "code": "score_band:low",
+     "count": 36
+    },
+    {
+     "code": "score_band:medium",
+     "count": 250
+    },
+    {
+     "code": "score_action:archive",
+     "count": 42
+    },
+    {
+     "code": "score_action:audit_required",
+     "count": 208
+    },
+    {
+     "code": "score_action:conversion_upgrade_offer",
+     "count": 105
+    },
+    {
+     "code": "score_action:generate_demo",
+     "count": 243
+    },
+    {
+     "code": "score_action:score_only",
+     "count": 2
+    },
+    {
+     "code": "audit_finding:BOOKING_PATH",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:CLICK_TO_CALL",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:CONTACT_FORM",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:DNS_FAILURE",
+     "count": 8
+    },
+    {
+     "code": "audit_finding:H1_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:HTTP_ERROR",
+     "count": 9
+    },
+    {
+     "code": "audit_finding:IMAGE_ALT_COVERAGE",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:META_DESCRIPTION_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:SERVICE_CATALOGUE",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:TITLE_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:VIEWPORT_META_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:WEBSITE_HEALTHY",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:WEBSITE_UNREACHABLE",
+     "count": 12
+    },
+    {
+     "code": "audit_finding:WHATSAPP_CTA",
+     "count": 78
+    },
+    {
+     "code": "crm_event:meeting_scheduled",
+     "count": 21
+    },
+    {
+     "code": "crm_event:proposal_sent",
+     "count": 21
+    },
+    {
+     "code": "crm_event:reply_received",
+     "count": 21
+    },
+    {
+     "code": "job:GENERATE_DEMO:failed",
+     "count": 47
+    },
+    {
+     "code": "job:GENERATE_DEMO:not_eligible",
+     "count": 12
+    },
+    {
+     "code": "selected_channel:email",
+     "count": 55
+    },
+    {
+     "code": "execution_channel:email",
+     "count": 39
+    }
+   ],
+   "start_date": null,
+   "vertical": null,
+   "warnings": [],
+   "workload_metrics": [
+    {
+     "category": "crm_event",
+     "count": 63,
+     "operator": "lab-operator"
+    },
+    {
+     "category": "demo_review",
+     "count": 94,
+     "operator": "lab-operator"
+    },
+    {
+     "category": "manual_outreach",
+     "count": 39,
+     "operator": "lab-operator"
+    },
+    {
+     "category": "readiness_review",
+     "count": 131,
+     "operator": "lab-operator"
+    }
+   ]
+  },
+  "global_details": {
+   "campaign_id": null,
+   "conversion_metrics": [
+    {
+     "code": "discovered_to_deduped",
+     "denominator": 800,
+     "numerator": 0,
+     "rate": 0.0
+    },
+    {
+     "code": "deduped_to_qualified",
+     "denominator": 0,
+     "numerator": 0,
+     "rate": null
+    },
+    {
+     "code": "contacted_to_replied",
+     "denominator": 16,
+     "numerator": 21,
+     "rate": 1.3125
+    },
+    {
+     "code": "replied_to_meeting",
+     "denominator": 0,
+     "numerator": 21,
+     "rate": null
+    },
+    {
+     "code": "meeting_to_proposal",
+     "denominator": 0,
+     "numerator": 21,
+     "rate": null
+    },
+    {
+     "code": "proposal_to_won",
+     "denominator": 20,
+     "numerator": 0,
+     "rate": 0.0
+    }
+   ],
+   "details": {
+    "common_audit_findings": {
+     "BOOKING_PATH": 78,
+     "CLICK_TO_CALL": 78,
+     "CONTACT_FORM": 78,
+     "DNS_FAILURE": 8,
+     "H1_PRESENT": 78,
+     "HTTP_ERROR": 9,
+     "IMAGE_ALT_COVERAGE": 78,
+     "META_DESCRIPTION_PRESENT": 78,
+     "SERVICE_CATALOGUE": 78,
+     "TITLE_PRESENT": 78,
+     "VIEWPORT_META_PRESENT": 78,
+     "WEBSITE_HEALTHY": 78,
+     "WEBSITE_UNREACHABLE": 12,
+     "WHATSAPP_CTA": 78
+    },
+    "jobs_failed_or_not_eligible": {
+     "GENERATE_DEMO:failed": 47,
+     "GENERATE_DEMO:not_eligible": 12
+    },
+    "transitions": {
+     "APPROVED_FOR_OUTREACH->CONSENT_PENDING": 76,
+     "APPROVED_FOR_OUTREACH->SUPPRESSED": 3,
+     "AUDITED->SCORED": 200,
+     "AUDITING->AUDITED": 200,
+     "CONSENT_PENDING->OUTREACH_READY": 55,
+     "CONSENT_PENDING->SUPPRESSED": 2,
+     "CONTACTED->REPLIED": 21,
+     "CONTACTED->SUPPRESSED": 2,
+     "DEMO_GENERATED->REVIEW_PENDING": 112,
+     "DEMO_QUEUED->DEMO_GENERATED": 112,
+     "DISCOVERED->AUDITING": 200,
+     "MEETING->PROPOSAL": 21,
+     "NONE->DISCOVERED": 1000,
+     "OUTREACH_READY->CONTACTED": 39,
+     "OUTREACH_READY->SUPPRESSED": 2,
+     "PROPOSAL->SUPPRESSED": 1,
+     "REPLIED->MEETING": 21,
+     "REVIEW_PENDING->APPROVED_FOR_OUTREACH": 94,
+     "REVIEW_PENDING->SUPPRESSED": 2,
+     "SCORED->DEMO_QUEUED": 112,
+     "SCORED->SUPPRESSED": 10
+    }
+   },
+   "end_date": null,
+   "funnel_metrics": [
+    {
+     "count": 800,
+     "stage": "DISCOVERED"
+    },
+    {
+     "count": 0,
+     "stage": "DEDUPED"
+    },
+    {
+     "count": 0,
+     "stage": "QUALIFIED"
+    },
+    {
+     "count": 0,
+     "stage": "ENRICHED"
+    },
+    {
+     "count": 0,
+     "stage": "AUDITED"
+    },
+    {
+     "count": 78,
+     "stage": "SCORED"
+    },
+    {
+     "count": 0,
+     "stage": "DEMO_GENERATED"
+    },
+    {
+     "count": 16,
+     "stage": "REVIEW_PENDING"
+    },
+    {
+     "count": 15,
+     "stage": "APPROVED_FOR_OUTREACH"
+    },
+    {
+     "count": 19,
+     "stage": "CONSENT_PENDING"
+    },
+    {
+     "count": 14,
+     "stage": "OUTREACH_READY"
+    },
+    {
+     "count": 16,
+     "stage": "CONTACTED"
+    },
+    {
+     "count": 0,
+     "stage": "REPLIED"
+    },
+    {
+     "count": 0,
+     "stage": "MEETING"
+    },
+    {
+     "count": 20,
+     "stage": "PROPOSAL"
+    },
+    {
+     "count": 0,
+     "stage": "WON"
+    },
+    {
+     "count": 0,
+     "stage": "LOST"
+    },
+    {
+     "count": 22,
+     "stage": "SUPPRESSED"
+    },
+    {
+     "count": 0,
+     "stage": "ARCHIVED"
+    }
+   ],
+   "limitations": [
+    "Metrics are computed live from append-only operational tables.",
+    "Manual outreach logs represent operator assertions; system delivery is always zero.",
+    "Current funnel counts reflect current business state, while transition metrics use recorded events."
+   ],
+   "quality_metrics": [
+    {
+     "code": "businesses_discovered",
+     "count": 1000
+    },
+    {
+     "code": "duplicates",
+     "count": 0
+    },
+    {
+     "code": "ambiguous_candidates",
+     "count": 0
+    },
+    {
+     "code": "unresolved_candidates",
+     "count": 0
+    },
+    {
+     "code": "source_observations",
+     "count": 6978
+    },
+    {
+     "code": "external_identities",
+     "count": 0
+    },
+    {
+     "code": "audit_runs",
+     "count": 200
+    },
+    {
+     "code": "website_healthy",
+     "count": 78
+    },
+    {
+     "code": "website_unreachable",
+     "count": 12
+    },
+    {
+     "code": "website_missing",
+     "count": 800
+    },
+    {
+     "code": "score_count",
+     "count": 600
+    },
+    {
+     "code": "brief_count",
+     "count": 600
+    },
+    {
+     "code": "average_score",
+     "count": 72.11
+    },
+    {
+     "code": "demo_generated",
+     "count": 159
+    },
+    {
+     "code": "demo_qa_passed",
+     "count": 112
+    },
+    {
+     "code": "demo_qa_failed",
+     "count": 47
+    },
+    {
+     "code": "approved_demos",
+     "count": 94
+    },
+    {
+     "code": "outreach_drafts_ready",
+     "count": 76
+    },
+    {
+     "code": "outreach_drafts_blocked",
+     "count": 0
+    },
+    {
+     "code": "readiness_reviews",
+     "count": 131
+    },
+    {
+     "code": "manual_outreach_logs",
+     "count": 39
+    },
+    {
+     "code": "system_delivery_count",
+     "count": 0
+    },
+    {
+     "code": "proposal_packages_created",
+     "count": 21
+    },
+    {
+     "code": "proposal_approved",
+     "count": 21
+    },
+    {
+     "code": "proposal_exported",
+     "count": 0
+    },
+    {
+     "code": "proposal_ready_queue_count",
+     "count": 0
+    },
+    {
+     "code": "suppression_entries",
+     "count": 22
+    },
+    {
+     "code": "do_not_contact_holds",
+     "count": 0
+    },
+    {
+     "code": "score_band:high",
+     "count": 314
+    },
+    {
+     "code": "score_band:low",
+     "count": 36
+    },
+    {
+     "code": "score_band:medium",
+     "count": 250
+    },
+    {
+     "code": "score_action:archive",
+     "count": 42
+    },
+    {
+     "code": "score_action:audit_required",
+     "count": 208
+    },
+    {
+     "code": "score_action:conversion_upgrade_offer",
+     "count": 105
+    },
+    {
+     "code": "score_action:generate_demo",
+     "count": 243
+    },
+    {
+     "code": "score_action:score_only",
+     "count": 2
+    },
+    {
+     "code": "audit_finding:BOOKING_PATH",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:CLICK_TO_CALL",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:CONTACT_FORM",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:DNS_FAILURE",
+     "count": 8
+    },
+    {
+     "code": "audit_finding:H1_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:HTTP_ERROR",
+     "count": 9
+    },
+    {
+     "code": "audit_finding:IMAGE_ALT_COVERAGE",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:META_DESCRIPTION_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:SERVICE_CATALOGUE",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:TITLE_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:VIEWPORT_META_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:WEBSITE_HEALTHY",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:WEBSITE_UNREACHABLE",
+     "count": 12
+    },
+    {
+     "code": "audit_finding:WHATSAPP_CTA",
+     "count": 78
+    },
+    {
+     "code": "crm_event:meeting_scheduled",
+     "count": 21
+    },
+    {
+     "code": "crm_event:proposal_sent",
+     "count": 21
+    },
+    {
+     "code": "crm_event:reply_received",
+     "count": 21
+    },
+    {
+     "code": "job:GENERATE_DEMO:failed",
+     "count": 47
+    },
+    {
+     "code": "job:GENERATE_DEMO:not_eligible",
+     "count": 12
+    },
+    {
+     "code": "selected_channel:email",
+     "count": 55
+    },
+    {
+     "code": "execution_channel:email",
+     "count": 39
+    }
+   ],
+   "start_date": null,
+   "vertical": null,
+   "warnings": [],
+   "workload_metrics": [
+    {
+     "category": "crm_event",
+     "count": 63,
+     "operator": "lab-operator"
+    },
+    {
+     "category": "demo_review",
+     "count": 94,
+     "operator": "lab-operator"
+    },
+    {
+     "category": "manual_outreach",
+     "count": 39,
+     "operator": "lab-operator"
+    },
+    {
+     "category": "readiness_review",
+     "count": 131,
+     "operator": "lab-operator"
+    }
+   ]
+  },
+  "vertical": {
+   "campaign_id": null,
+   "conversion_metrics": [
+    {
+     "code": "discovered_to_deduped",
+     "denominator": 800,
+     "numerator": 0,
+     "rate": 0.0
+    },
+    {
+     "code": "deduped_to_qualified",
+     "denominator": 0,
+     "numerator": 0,
+     "rate": null
+    },
+    {
+     "code": "contacted_to_replied",
+     "denominator": 16,
+     "numerator": 21,
+     "rate": 1.3125
+    },
+    {
+     "code": "replied_to_meeting",
+     "denominator": 0,
+     "numerator": 21,
+     "rate": null
+    },
+    {
+     "code": "meeting_to_proposal",
+     "denominator": 0,
+     "numerator": 21,
+     "rate": null
+    },
+    {
+     "code": "proposal_to_won",
+     "denominator": 20,
+     "numerator": 0,
+     "rate": 0.0
+    }
+   ],
+   "details": {},
+   "end_date": null,
+   "funnel_metrics": [
+    {
+     "count": 800,
+     "stage": "DISCOVERED"
+    },
+    {
+     "count": 0,
+     "stage": "DEDUPED"
+    },
+    {
+     "count": 0,
+     "stage": "QUALIFIED"
+    },
+    {
+     "count": 0,
+     "stage": "ENRICHED"
+    },
+    {
+     "count": 0,
+     "stage": "AUDITED"
+    },
+    {
+     "count": 78,
+     "stage": "SCORED"
+    },
+    {
+     "count": 0,
+     "stage": "DEMO_GENERATED"
+    },
+    {
+     "count": 16,
+     "stage": "REVIEW_PENDING"
+    },
+    {
+     "count": 15,
+     "stage": "APPROVED_FOR_OUTREACH"
+    },
+    {
+     "count": 19,
+     "stage": "CONSENT_PENDING"
+    },
+    {
+     "count": 14,
+     "stage": "OUTREACH_READY"
+    },
+    {
+     "count": 16,
+     "stage": "CONTACTED"
+    },
+    {
+     "count": 0,
+     "stage": "REPLIED"
+    },
+    {
+     "count": 0,
+     "stage": "MEETING"
+    },
+    {
+     "count": 20,
+     "stage": "PROPOSAL"
+    },
+    {
+     "count": 0,
+     "stage": "WON"
+    },
+    {
+     "count": 0,
+     "stage": "LOST"
+    },
+    {
+     "count": 22,
+     "stage": "SUPPRESSED"
+    },
+    {
+     "count": 0,
+     "stage": "ARCHIVED"
+    }
+   ],
+   "limitations": [
+    "Metrics are computed live from append-only operational tables.",
+    "Manual outreach logs represent operator assertions; system delivery is always zero.",
+    "Current funnel counts reflect current business state, while transition metrics use recorded events."
+   ],
+   "quality_metrics": [
+    {
+     "code": "businesses_discovered",
+     "count": 1000
+    },
+    {
+     "code": "duplicates",
+     "count": 0
+    },
+    {
+     "code": "ambiguous_candidates",
+     "count": 0
+    },
+    {
+     "code": "unresolved_candidates",
+     "count": 0
+    },
+    {
+     "code": "source_observations",
+     "count": 6978
+    },
+    {
+     "code": "external_identities",
+     "count": 0
+    },
+    {
+     "code": "audit_runs",
+     "count": 200
+    },
+    {
+     "code": "website_healthy",
+     "count": 78
+    },
+    {
+     "code": "website_unreachable",
+     "count": 12
+    },
+    {
+     "code": "website_missing",
+     "count": 800
+    },
+    {
+     "code": "score_count",
+     "count": 600
+    },
+    {
+     "code": "brief_count",
+     "count": 600
+    },
+    {
+     "code": "average_score",
+     "count": 72.11
+    },
+    {
+     "code": "demo_generated",
+     "count": 159
+    },
+    {
+     "code": "demo_qa_passed",
+     "count": 112
+    },
+    {
+     "code": "demo_qa_failed",
+     "count": 47
+    },
+    {
+     "code": "approved_demos",
+     "count": 94
+    },
+    {
+     "code": "outreach_drafts_ready",
+     "count": 76
+    },
+    {
+     "code": "outreach_drafts_blocked",
+     "count": 0
+    },
+    {
+     "code": "readiness_reviews",
+     "count": 131
+    },
+    {
+     "code": "manual_outreach_logs",
+     "count": 39
+    },
+    {
+     "code": "system_delivery_count",
+     "count": 0
+    },
+    {
+     "code": "proposal_packages_created",
+     "count": 21
+    },
+    {
+     "code": "proposal_approved",
+     "count": 21
+    },
+    {
+     "code": "proposal_exported",
+     "count": 0
+    },
+    {
+     "code": "proposal_ready_queue_count",
+     "count": 0
+    },
+    {
+     "code": "suppression_entries",
+     "count": 22
+    },
+    {
+     "code": "do_not_contact_holds",
+     "count": 0
+    },
+    {
+     "code": "score_band:high",
+     "count": 314
+    },
+    {
+     "code": "score_band:low",
+     "count": 36
+    },
+    {
+     "code": "score_band:medium",
+     "count": 250
+    },
+    {
+     "code": "score_action:archive",
+     "count": 42
+    },
+    {
+     "code": "score_action:audit_required",
+     "count": 208
+    },
+    {
+     "code": "score_action:conversion_upgrade_offer",
+     "count": 105
+    },
+    {
+     "code": "score_action:generate_demo",
+     "count": 243
+    },
+    {
+     "code": "score_action:score_only",
+     "count": 2
+    },
+    {
+     "code": "audit_finding:BOOKING_PATH",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:CLICK_TO_CALL",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:CONTACT_FORM",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:DNS_FAILURE",
+     "count": 8
+    },
+    {
+     "code": "audit_finding:H1_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:HTTP_ERROR",
+     "count": 9
+    },
+    {
+     "code": "audit_finding:IMAGE_ALT_COVERAGE",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:META_DESCRIPTION_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:SERVICE_CATALOGUE",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:TITLE_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:VIEWPORT_META_PRESENT",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:WEBSITE_HEALTHY",
+     "count": 78
+    },
+    {
+     "code": "audit_finding:WEBSITE_UNREACHABLE",
+     "count": 12
+    },
+    {
+     "code": "audit_finding:WHATSAPP_CTA",
+     "count": 78
+    },
+    {
+     "code": "crm_event:meeting_scheduled",
+     "count": 21
+    },
+    {
+     "code": "crm_event:proposal_sent",
+     "count": 21
+    },
+    {
+     "code": "crm_event:reply_received",
+     "count": 21
+    },
+    {
+     "code": "job:GENERATE_DEMO:failed",
+     "count": 47
+    },
+    {
+     "code": "job:GENERATE_DEMO:not_eligible",
+     "count": 12
+    },
+    {
+     "code": "selected_channel:email",
+     "count": 55
+    },
+    {
+     "code": "execution_channel:email",
+     "count": 39
+    }
+   ],
+   "start_date": null,
+   "vertical": "hair-salon",
+   "warnings": [],
+   "workload_metrics": [
+    {
+     "category": "crm_event",
+     "count": 63,
+     "operator": "lab-operator"
+    },
+    {
+     "category": "demo_review",
+     "count": 94,
+     "operator": "lab-operator"
+    },
+    {
+     "category": "manual_outreach",
+     "count": 39,
+     "operator": "lab-operator"
+    },
+    {
+     "category": "readiness_review",
+     "count": 131,
+     "operator": "lab-operator"
+    }
+   ]
+  }
+ },
+ "timings_s": {
+  "campaign": 0.538,
+  "campaign_window": 0.519,
+  "empty_window": 0.024,
+  "global": 1.635,
+  "global_details": 0.562,
+  "vertical": 0.711
+ }
+}

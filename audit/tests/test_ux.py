@@ -118,7 +118,12 @@ def test_LBOE_AUD_110_golden_path_completes_through_ui_forms(client: Any, seed: 
     assert _state(client, business_id) == "OUTREACH_READY"
     _submit(client, page, r"/outreach-log$", {"operator": "Ops", "notes": "Sent from my own mailbox"})
     assert _state(client, business_id) == "CONTACTED"
-    _submit(client, page, r"/crm-event$", {"event_type": "reply_received", "summary": "Asked for pricing", "operator": "Ops"})
+    _submit(
+        client,
+        page,
+        r"/crm-event$",
+        {"event_type": "reply_received", "summary": "Asked for pricing", "operator": "Ops"},
+    )
     assert _state(client, business_id) == "REPLIED"
     _submit(client, page, r"/follow-ups$", {"reason": "Send pricing", "due_at": "2026-10-05T10:00"})
     assert "Send pricing" in client.get("/ui/queues/follow-up").text
@@ -386,3 +391,29 @@ def test_LBOE_AUD_117_mobile_navigation_targets_are_at_least_24px() -> None:
     assert (min_height and int(min_height.group(1)) >= 24) or (padding and int(padding.group(1)) >= 6), (
         "nav links render ~17px tall: below the WCAG 2.2 SC 2.5.8 24x24 minimum"
     )
+
+
+def test_LBOE_AUD_122_dashboard_counts_failed_and_blocked_jobs(client: Any, seed: Any) -> None:
+    """The dashboard tile reads report keys that do not exist, so it always shows 0."""
+    campaign = seed.campaign()
+    [business_id] = seed.businesses(campaign, 1)
+    seed.score_and_brief(business_id)
+    refused = client.post(f"/v1/businesses/{business_id}/proposal", json={"idempotency_key": uuid.uuid4().hex})
+    assert refused.json()["status"] == "not_proposal_eligible"  # recorded as a not_eligible job
+    soup = _soup(client, "/ui")
+    line = next(div for div in soup.select(".stat-line") if "Failed / blocked jobs" in div.get_text())
+    assert int(line.find("strong").get_text()) >= 1, line.get_text(" ", strip=True)
+
+
+def test_LBOE_AUD_123_recommended_step_follows_the_lifecycle_stage(client: Any, seed: Any) -> None:
+    """A lead awaiting a human decision must not be told to 'run optional enrichment'."""
+    campaign = seed.campaign()
+    [business_id] = seed.businesses(campaign, 1)
+    demo = seed.demo(business_id)
+    assert demo["status"] == "qa_passed"
+    hero = _soup(client, f"/ui/businesses/{business_id}").select_one("section.next-action")
+    assert hero is not None
+    text = hero.get_text(" ", strip=True).lower()
+    assert "review" in text and "concept" in text, text
+    assert hero.find("a", href="#workflow") is not None, "hero does not lead to the pending human decision"
+    assert not hero.select("form input[name=action]"), "hero offers an automated action instead of the decision"

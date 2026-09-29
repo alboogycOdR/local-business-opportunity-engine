@@ -815,9 +815,18 @@ index 31ce8dd..b2de15a 100644
 +app.add_exception_handler(StarletteHTTPException, ui_http_exception_handler)
 +app.add_exception_handler(RequestValidationError, ui_validation_exception_handler)
 diff --git a/apps/api/src/lboe_api/reporting_service.py b/apps/api/src/lboe_api/reporting_service.py
-index 15e6a11..363468a 100644
+index 15e6a11..abb122d 100644
 --- a/apps/api/src/lboe_api/reporting_service.py
 +++ b/apps/api/src/lboe_api/reporting_service.py
+@@ -6,7 +6,7 @@ from collections import Counter
+ from datetime import UTC, date, datetime, time
+ from typing import Any
+ 
+-from sqlalchemy import select
++from sqlalchemy import func, select
+ from sqlalchemy.orm import Session
+ 
+ from .db import (
 @@ -73,6 +73,22 @@ def _bounds(start_date: date | None, end_date: date | None) -> tuple[datetime |
      return start, end
  
@@ -1032,11 +1041,39 @@ index 15e6a11..363468a 100644
          },
          {"code": "score_count", "count": len(scores)},
          {"code": "brief_count", "count": len(brief_ids)},
+@@ -342,3 +326,27 @@ def build_pilot_report(
+         "limitations": limitations,
+         "details": details,
+     }
++
++
++def dashboard_metrics(session: Session) -> dict[str, Any]:
++    """The handful of counts the operator dashboard shows, computed with SQL COUNTs.
++
++    Same funnel shape as ``build_pilot_report`` (all campaigns, no date window) without
++    materialising every operational row on each dashboard load.
++    """
++    by_state = dict(session.execute(select(Business.state, func.count()).group_by(Business.state)).all())
++    funnel = [{"stage": stage, "count": int(by_state.get(stage, 0))} for stage in STAGES]
++
++    def count(model: Any, *where: Any) -> int:
++        return int(session.scalar(select(func.count()).select_from(model).where(*where)) or 0)
++
++    quality = [
++        {"code": "system_delivery_count", "count": 0},
++        {"code": "jobs_failed_or_not_eligible", "count": count(Job, Job.status.in_(["failed", "not_eligible"]))},
++        {"code": "approved_demos", "count": count(GeneratedDemo, GeneratedDemo.status == "approved")},
++        {
++            "code": "proposal_ready_queue_count",
++            "count": count(ProposalPackage, ProposalPackage.status.in_(["draft", "changes_requested"])),
++        },
++    ]
++    return {"funnel_metrics": funnel, "quality_metrics": quality}
 diff --git a/apps/api/src/lboe_api/static/ui.css b/apps/api/src/lboe_api/static/ui.css
-index e17a3bb..889d88c 100644
+index e17a3bb..ff2fa9d 100644
 --- a/apps/api/src/lboe_api/static/ui.css
 +++ b/apps/api/src/lboe_api/static/ui.css
-@@ -1,7 +1,30 @@
+@@ -1,7 +1,32 @@
 -:root{--ink:#14213d;--ink-2:#25345a;--paper:#f5f6f1;--card:#fff;--line:#dfe4dc;--muted:#6d7788;--lime:#d9f75b;--lime-2:#b9dc38;--coral:#ff795f;--blue:#5672e8;--shadow:0 16px 45px rgba(20,33,61,.08)}
 -*{box-sizing:border-box}html{background:var(--paper)}body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--paper);line-height:1.5}a{color:inherit}header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:28px;padding:18px clamp(20px,5vw,72px);background:var(--ink);color:#fff;box-shadow:0 3px 18px rgba(20,33,61,.16)}header>a{font-size:1.08rem;letter-spacing:-.02em;text-decoration:none}nav{display:flex;gap:18px;align-items:center;flex-wrap:wrap}nav a{font-size:.84rem;color:#cbd4e7;text-decoration:none;transition:color .18s}nav a:hover,nav a:focus{color:var(--lime)}main{max-width:1380px;margin:0 auto;padding:34px clamp(20px,5vw,72px) 80px}.safety{background:var(--lime);color:var(--ink);padding:10px clamp(20px,5vw,72px);font-size:.82rem;font-weight:700;letter-spacing:.01em}.muted{color:var(--muted);font-size:.84rem}.muted a{color:var(--blue)}h1,h2,h3{letter-spacing:-.035em;line-height:1.1}h1{font-size:clamp(2rem,4vw,3.6rem);margin:10px 0 22px}h2{font-size:1.35rem;margin:0 0 14px}h3{font-size:1rem;margin:22px 0 10px}.hero{display:grid;grid-template-columns:1.25fr .75fr;gap:28px;align-items:end;margin-bottom:28px}.hero-copy{max-width:700px}.eyebrow{font-size:.74rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--coral);margin-bottom:10px}.hero-copy p{font-size:1.06rem;color:var(--muted);max-width:650px}.hero-actions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:12px;margin:18px 0 28px}.card{display:flex;flex-direction:column;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:var(--shadow);text-decoration:none;color:inherit;transition:transform .18s,box-shadow .18s}.card:hover{transform:translateY(-2px);box-shadow:0 20px 50px rgba(20,33,61,.13)}.card span{font-size:.72rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}.card b{font-size:2rem;letter-spacing:-.05em}.layout-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px;align-items:start}.section{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:var(--shadow);margin:18px 0}.section-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:16px}.map-shell{position:relative;min-height:350px;overflow:hidden;border-radius:16px;background:#d8e7dd;border:1px solid #c5d5c9}.map-iframe{display:block;width:100%;height:350px;border:0;filter:saturate(.82) contrast(.98)}.map-overlay{position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(20,33,61,.08),transparent 32%,transparent 70%,rgba(20,33,61,.2))}.map-label{position:absolute;left:22px;top:18px;z-index:2;padding:8px 10px;border-radius:9px;background:rgba(255,255,255,.92);backdrop-filter:blur(6px);font-size:.75rem;font-weight:800;color:var(--ink)}.map-open{position:absolute;right:16px;bottom:15px;pointer-events:auto;background:var(--ink);color:#fff}.map-leads{margin-top:14px;padding:2px}.map-leads h3{margin:0 0 2px}.map-lead-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.map-lead{display:grid;grid-template-columns:10px 1fr;column-gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px;text-decoration:none;background:#fbfcf8}.map-lead:hover{border-color:var(--blue);background:#f1f4ff}.map-lead small{grid-column:2;color:var(--muted);font-size:.72rem}.map-dot{width:8px;height:8px;border-radius:50%;background:var(--coral);grid-row:1 / span 2}.map-lead:nth-child(2n) .map-dot{background:var(--blue)}.button,button{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:0;border-radius:10px;padding:11px 15px;background:var(--ink);color:#fff;text-decoration:none;font:inherit;font-weight:750;cursor:pointer;transition:transform .16s,background .16s}.button:hover,button:hover{background:var(--ink-2);transform:translateY(-1px)}.button-primary{background:var(--lime);color:var(--ink)}.button-primary:hover{background:var(--lime-2)}.button-secondary{background:#e9edf5;color:var(--ink)}.button-small{padding:8px 10px;font-size:.78rem}.notice{background:#eef8d5;border:1px solid #c9e27a;padding:14px 16px;border-radius:12px}.warning{background:#fff0ea;border:1px solid #ffc4b6;color:#853b2c;padding:14px 16px;border-radius:12px}.badge{display:inline-flex;align-items:center;gap:6px;background:#edf0f8;color:#334875;padding:5px 9px;border-radius:999px;font-size:.75rem;font-weight:800}.badge:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--blue)}table{width:100%;border-collapse:separate;border-spacing:0;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:16px 0;box-shadow:var(--shadow)}th,td{padding:13px 14px;border-bottom:1px solid #edf0eb;text-align:left;vertical-align:top;font-size:.88rem}th{background:#f1f3ee;color:var(--muted);font-size:.7rem;letter-spacing:.08em;text-transform:uppercase}tr:last-child td{border-bottom:0}tr:hover td{background:#fbfcf8}.table-primary{display:block;font-weight:800;text-decoration:none}.table-primary:hover{text-decoration:underline}.table-sub{display:block;margin-top:3px;color:var(--muted);font-size:.72rem}input,textarea,select{font:inherit;padding:11px 12px;margin:4px 4px 4px 0;border:1px solid #cbd3c8;border-radius:9px;background:#fff;color:var(--ink)}input:focus,textarea:focus,select:focus,button:focus,a:focus{outline:3px solid rgba(217,247,91,.75);outline-offset:2px}textarea{display:block;width:100%;min-height:100px}.queue-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}.queue-grid .card{min-height:125px}.empty-state{padding:28px;text-align:center;color:var(--muted);border:1px dashed #cbd3c8;border-radius:14px;background:#fbfcf8}.success{color:#27613b;background:#edf8ef;border:1px solid #b8dfbf;padding:12px;border-radius:10px}code,pre{display:block;background:#121c35;color:#dff3c3;padding:16px;border-radius:10px;overflow:auto}pre{white-space:pre-wrap}.sidebar-layout{display:grid;grid-template-columns:220px 1fr;gap:26px}.side-nav{position:sticky;top:100px;align-self:start}.side-nav a{display:block;padding:10px 12px;border-radius:9px;text-decoration:none;color:var(--muted)}.side-nav a:hover{background:#e9eddc;color:var(--ink)}.stat-line{display:flex;justify-content:space-between;gap:20px;border-bottom:1px solid #edf0eb;padding:11px 0}.stat-line:last-child{border-bottom:0}.next-action{display:flex;justify-content:space-between;align-items:center;gap:24px;padding:22px 24px;margin:0 0 28px;border-radius:16px;background:var(--ink);color:#fff;box-shadow:var(--shadow)}.next-action h2{margin:3px 0 5px;color:#fff}.next-action p{margin:0;color:#cbd4e7;max-width:700px}.next-action .eyebrow{color:var(--lime)}.page-intro{display:flex;justify-content:space-between;align-items:end;margin-bottom:20px}.create-panel{display:flex;justify-content:space-between;align-items:end;gap:24px}.create-panel form{display:flex;flex-wrap:wrap;justify-content:flex-end}@media(max-width:850px){header{align-items:flex-start;flex-direction:column;gap:10px}nav{gap:11px}.hero,.layout-grid,.sidebar-layout{grid-template-columns:1fr}.hero-actions{justify-content:flex-start}.side-nav{position:static;display:flex;overflow:auto}.side-nav a{white-space:nowrap}main{padding-top:24px}.map-shell{min-height:260px}.map-iframe{height:260px}.next-action,.create-panel{align-items:flex-start;flex-direction:column}.create-panel form{justify-content:flex-start;width:100%}table{display:block;overflow-x:auto;white-space:nowrap}}
 +:root{--ink:#14213d;--ink-2:#25345a;--paper:#f5f6f1;--card:#fff;--line:#dfe4dc;--muted:#636c7b;--lime:#d9f75b;--lime-2:#b9dc38;--coral:#ff795f;--coral-ink:#aa513f;--blue:#4b64cc;--shadow:0 16px 45px rgba(20,33,61,.08)}
@@ -1053,13 +1090,15 @@ index e17a3bb..889d88c 100644
 +main:focus{outline:none}
 +.brand{color:#fff;text-decoration:none}
 +.breadcrumb{margin:0 0 10px}
-+.table-scroll{overflow-x:auto;margin:16px 0}
-+.table-scroll table{margin:0}
++.table-scroll{position:relative;overflow-x:auto;max-width:100%;margin:16px 0}
++.table-scroll table{margin:0;display:table;overflow:visible}
++.table-primary{display:flex;align-items:center;min-height:24px}
++.visually-hidden{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 +.pager{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px}
 +label.field{display:grid;gap:4px;margin:0 0 12px;font-weight:700;font-size:.86rem}
 +label.field span{color:var(--ink)}
 +label.check{display:flex;gap:8px;align-items:center;min-height:32px;font-weight:500}
-+label.check input{width:20px;height:20px}
++label.check input{width:24px;height:24px}
 +.hint{font-weight:400;color:var(--muted)}
 +fieldset{border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin:0 0 12px}
 +legend{font-weight:800;padding:0 6px}
@@ -1294,7 +1333,7 @@ index 0000000..d53e52e
 +    response.status_code = 422
 +    return response
 diff --git a/apps/api/src/lboe_api/ui/routes.py b/apps/api/src/lboe_api/ui/routes.py
-index 6727e0e..206fec0 100644
+index 6727e0e..85b217c 100644
 --- a/apps/api/src/lboe_api/ui/routes.py
 +++ b/apps/api/src/lboe_api/ui/routes.py
 @@ -6,15 +6,15 @@ import hmac
@@ -1317,10 +1356,12 @@ index 6727e0e..206fec0 100644
  from sqlalchemy.orm import Session
  
  from lboe_api.db import (
-@@ -67,13 +67,25 @@ from lboe_api.pilot_service import (
+@@ -66,14 +66,26 @@ from lboe_api.pilot_service import (
+     pilot_for_business,
      readiness_summary,
  )
- from lboe_api.reporting_service import build_pilot_report
+-from lboe_api.reporting_service import build_pilot_report
++from lboe_api.reporting_service import build_pilot_report, dashboard_metrics
 +from lboe_api.ui.presentation import fmt_dt, state_label, status_label
  
  router = APIRouter()
@@ -1681,9 +1722,12 @@ index 6727e0e..206fec0 100644
              "/ui/queues",
              "Open review queue",
          )
-@@ -575,15 +698,9 @@ def next_action_panel(report: dict[str, Any]) -> str:
+@@ -573,17 +696,11 @@ def next_action_panel(report: dict[str, Any]) -> str:
+ 
+ @router.get("/ui", response_class=HTMLResponse)
  def dashboard(db: Session = Depends(session)) -> HTMLResponse:
-     report = build_pilot_report(db)
+-    report = build_pilot_report(db)
++    report = dashboard_metrics(db)
      quality = {item["code"]: item["count"] for item in report["quality_metrics"]}
 +    lead_counts = dict(db.execute(select(Business.campaign_id, func.count()).group_by(Business.campaign_id)).all())
      campaigns = db.scalars(select(Campaign).order_by(Campaign.created_at.desc())).all()
@@ -1699,7 +1743,7 @@ index 6727e0e..206fec0 100644
      campaign_businesses = (
          db.scalars(select(Business).where(Business.campaign_id == campaign.id).order_by(Business.display_name)).all()
          if campaign
-@@ -618,20 +735,13 @@ def opportunities(db: Session = Depends(session)) -> HTMLResponse:
+@@ -618,29 +735,22 @@ def opportunities(db: Session = Depends(session)) -> HTMLResponse:
  def campaigns(db: Session = Depends(session)) -> HTMLResponse:
      rows = []
      seen: set[tuple[str, str, str | None]] = set()
@@ -1723,7 +1767,9 @@ index 6727e0e..206fec0 100644
          rows.append(
              f"<tr><td><a class='table-primary' href='/ui/campaigns/{campaign.id}'>{esc(campaign.name)}</a><small class='table-sub'>Latest run · {esc(campaign.created_at)}</small></td><td>{esc(campaign.vertical)}</td><td>{esc(campaign.geography)}</td><td><strong>{count}</strong></td><td><a class='button button-small button-secondary' href='/ui/campaigns/{campaign.id}'>Open workspace</a></td></tr>"
          )
-@@ -640,7 +750,7 @@ def campaigns(db: Session = Depends(session)) -> HTMLResponse:
+     table = (
+-        "<table><tr><th>Campaign</th><th>Vertical</th><th>Geography</th><th>Leads</th><th></th></tr>"
++        "<table><tr><th>Campaign</th><th>Vertical</th><th>Geography</th><th>Leads</th><th><span class='visually-hidden'>Actions</span></th></tr>"
          + "".join(rows)
          + "</table>"
      )
@@ -1919,13 +1965,44 @@ index 6727e0e..206fec0 100644
          else "<p class='success'>No identity, suppression, or policy holds are blocking this lead.</p>"
      )
      observability = (
-@@ -962,12 +1121,17 @@ def business_detail(
+@@ -962,12 +1121,50 @@ def business_detail(
      )
      pilot_banner = ""
      if pilot is not None:
 -        pilot_banner = f"<div class='safety'>{'DRY RUN MODE — manual outreach and CRM outcome logging are blocked by the operator console.' if pilot.mode == 'dry_run' else 'ACTIVE PILOT MODE — manual records represent operator activity; LBOE still sends nothing.'} <a href='/ui/pilots/{pilot.id}'>View pilot</a></div>"
 +        pilot_banner = f"<div class='notice'>{'DRY RUN pilot — this is a rehearsal. Do not contact businesses or record real outreach for it.' if pilot.mode == 'dry_run' else 'ACTIVE pilot — manual records represent real operator activity; LBOE still sends nothing.'} <a href='/ui/pilots/{pilot.id}'>View pilot</a></div>"
      next_action_button = ""
++    # Once a lead is in the human-gated part of the pipeline, the pending decision is the
++    # next step - not the score-driven offer, which would suggest automated work instead.
++    stage_decisions = {
++        "REVIEW_PENDING": (
++            "Review the concept preview",
++            "A concept passed QA and needs your decision.",
++            "Review concept",
++        ),
++        "APPROVED_FOR_OUTREACH": (
++            "Prepare outreach drafts",
++            "The concept is approved. Draft copy for your review; nothing is sent.",
++            "Prepare drafts",
++        ),
++        "CONSENT_PENDING": (
++            "Decide whether you may contact them",
++            "Record the basis for contact, or decline. Listing details are not consent.",
++            "Make consent decision",
++        ),
++        "OUTREACH_READY": (
++            "Contact them yourself, then record it",
++            "LBOE never sends. Use the approved draft outside LBOE and record what you did.",
++            "Record contact",
++        ),
++        "CONTACTED": ("Record their response", "Log a reply, no response, or a loss.", "Record outcome"),
++        "REPLIED": ("Record the next outcome", "Log a scheduled meeting or a loss.", "Record outcome"),
++        "MEETING": ("Record the next outcome", "Log that a proposal was sent, or a loss.", "Record outcome"),
++        "PROPOSAL": ("Record the result", "Log a win or a loss.", "Record outcome"),
++    }
++    stage_decision = None if suppressed else stage_decisions.get(business.state)
++    if stage_decision is not None:
++        action_title, action_reason = stage_decision[0], stage_decision[1]
 +    if suppressed:
 +        action_title = "Suppressed — do not contact"
 +        action_reason = "No pipeline actions are available for a suppressed business."
@@ -1935,11 +2012,13 @@ index 6727e0e..206fec0 100644
 -    if raw_action == "audit_required" and latest_audit is None:
 +    if suppressed:
 +        pass
++    elif stage_decision is not None:
++        next_action_button = f"<a class='button button-primary' href='#workflow'>{esc(stage_decision[2])}</a>"
 +    elif raw_action == "audit_required" and latest_audit is None:
          next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='audit'><button class='button-primary'>Run website audit</button></form>"
      elif evidence_needs_refresh:
          next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='refresh_evidence'><button class='button-primary'>Refresh score and brief</button></form>"
-@@ -987,24 +1151,48 @@ def business_detail(
+@@ -987,24 +1184,48 @@ def business_detail(
          next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='score'><button class='button-primary'>Score this lead</button></form>"
      elif any(demo.status == "approved" for demo in demos) and not proposals:
          next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='proposal'><button class='button-primary'>Create proposal pack</button></form>"
@@ -1994,7 +2073,7 @@ index 6727e0e..206fec0 100644
      )
      return page(business.display_name, body)
  
-@@ -1100,13 +1288,13 @@ def outreach_workbench(business_id: uuid.UUID, db: Session = Depends(session)) -
+@@ -1100,13 +1321,13 @@ def outreach_workbench(business_id: uuid.UUID, db: Session = Depends(session)) -
          or "<p>No draft package.</p>"
      )
      followup_html = (
@@ -2010,7 +2089,7 @@ index 6727e0e..206fec0 100644
      )
  
  
-@@ -1115,9 +1303,10 @@ def follow_up_queue(db: Session = Depends(session)) -> HTMLResponse:
+@@ -1115,9 +1336,10 @@ def follow_up_queue(db: Session = Depends(session)) -> HTMLResponse:
      tasks = db.scalars(
          select(ManualFollowUpTask).where(ManualFollowUpTask.status == "open").order_by(ManualFollowUpTask.due_at)
      ).all()
@@ -2022,7 +2101,7 @@ index 6727e0e..206fec0 100644
              for item in tasks
          )
          or "<tr><td colspan='3'>No open follow-ups</td></tr>"
-@@ -1151,6 +1340,8 @@ def assign_business(
+@@ -1151,6 +1373,8 @@ def assign_business(
  
  @router.post("/ui/businesses/{business_id}/comment")
  def add_comment(business_id: uuid.UUID, body: str = Form(...), db: Session = Depends(session)) -> RedirectResponse:
@@ -2031,7 +2110,7 @@ index 6727e0e..206fec0 100644
      operator = db.scalar(select(Operator).where(Operator.active.is_(True)).order_by(Operator.created_at))
      if operator is None:
          operator = Operator(display_name="local-operator", role="owner")
-@@ -1243,7 +1434,7 @@ def queues(db: Session = Depends(session)) -> HTMLResponse:
+@@ -1243,7 +1467,7 @@ def queues(db: Session = Depends(session)) -> HTMLResponse:
      body = (
          "<div class='queue-grid'>"
          + "".join(
@@ -2040,7 +2119,7 @@ index 6727e0e..206fec0 100644
              for slug, label, query in links
          )
          + "</div>"
-@@ -1267,7 +1458,7 @@ def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLRespons
+@@ -1267,7 +1491,7 @@ def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLRespons
          return proposal_ready_queue(db)
      if queue_name == "delivery":
          return delivery_queue(db)
@@ -2049,7 +2128,7 @@ index 6727e0e..206fec0 100644
          "demo-review": (
              "Demo review",
              select(GeneratedDemo).where(GeneratedDemo.status.in_(["qa_passed", "review_pending"])),
-@@ -1290,13 +1481,14 @@ def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLRespons
+@@ -1290,13 +1514,14 @@ def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLRespons
      if queue_name not in mapping:
          raise HTTPException(404, "queue_not_found")
      title, query = mapping[queue_name]
@@ -2070,7 +2149,7 @@ index 6727e0e..206fec0 100644
          rows.append(
              f"<li><a href='/ui/businesses/{business_id}'>{esc(business.display_name if business else business_id)}</a></li>"
          )
-@@ -1331,21 +1523,16 @@ def no_website_queue(db: Session) -> HTMLResponse:
+@@ -1331,27 +1556,22 @@ def no_website_queue(db: Session) -> HTMLResponse:
      ).all()
      rows: list[str] = []
      seen: set[tuple[str, str | None]] = set()
@@ -2097,7 +2176,14 @@ index 6727e0e..206fec0 100644
          action = brief.recommended_next_action.replace("_", " ") if brief else "score this lead"
          rows.append(
              f"<tr><td><a class='table-primary' href='/ui/businesses/{business.id}'>{esc(business.display_name)}</a><small class='table-sub'>{esc(business.locality or 'Location not verified')}</small></td><td><span class='badge'>{esc(business.state.replace('_', ' ').title())}</span></td><td>{score.score if score else '—'}</td><td>{esc(action)}</td><td><a class='button button-small button-secondary' href='/ui/businesses/{business.id}'>Review lead</a></td></tr>"
-@@ -1367,17 +1554,13 @@ def no_website_queue(db: Session) -> HTMLResponse:
+         )
+     table = (
+-        "<table><tr><th>Business</th><th>State</th><th>Score</th><th>Recommended next step</th><th></th></tr>"
++        "<table><tr><th>Business</th><th>State</th><th>Score</th><th>Recommended next step</th><th><span class='visually-hidden'>Actions</span></th></tr>"
+         + ("".join(rows) or "<tr><td colspan='5'>No active businesses without a website were found.</td></tr>")
+         + "</table>"
+     )
+@@ -1367,17 +1587,13 @@ def no_website_queue(db: Session) -> HTMLResponse:
  @router.get("/ui/queues/no-demo-reason", response_class=HTMLResponse)
  def no_demo_reason_queue(db: Session = Depends(session)) -> HTMLResponse:
      items = []
@@ -2122,7 +2208,7 @@ index 6727e0e..206fec0 100644
          if score and demo is None:
              items.append((business, score.recommended_next_action, "audit, manual review, or score-only follow-up"))
      return _reason_queue("Why no demo", items)
-@@ -1386,10 +1569,17 @@ def no_demo_reason_queue(db: Session = Depends(session)) -> HTMLResponse:
+@@ -1386,10 +1602,17 @@ def no_demo_reason_queue(db: Session = Depends(session)) -> HTMLResponse:
  @router.get("/ui/queues/qa-failed", response_class=HTMLResponse)
  def qa_failed_queue(db: Session = Depends(session)) -> HTMLResponse:
      items = []
@@ -2143,7 +2229,7 @@ index 6727e0e..206fec0 100644
              failed = (
                  ", ".join(str(k) for k, v in (qa.checks if qa else {}).items() if v is False)
                  or "QA failed; inspect stored checks"
-@@ -1412,12 +1602,10 @@ def not_outreach_ready_queue(db: Session = Depends(session)) -> HTMLResponse:
+@@ -1412,12 +1635,10 @@ def not_outreach_ready_queue(db: Session = Depends(session)) -> HTMLResponse:
  @router.get("/ui/queues/weak-evidence", response_class=HTMLResponse)
  def weak_evidence_queue(db: Session = Depends(session)) -> HTMLResponse:
      items = []
@@ -2160,7 +2246,7 @@ index 6727e0e..206fec0 100644
          if score and score.recommended_next_action in {"manual_review", "audit_required", "score_only"}:
              items.append((business, score.recommended_next_action, "verify business-owned evidence before any demo"))
      return _reason_queue("Weak evidence", items)
-@@ -1464,7 +1652,7 @@ def operators(db: Session = Depends(session)) -> HTMLResponse:
+@@ -1464,7 +1685,7 @@ def operators(db: Session = Depends(session)) -> HTMLResponse:
          f"<tr><td>{esc(op.display_name)}</td><td>{esc(op.role)}</td><td>{'active' if op.active else 'inactive'}</td></tr>"
          for op in db.scalars(select(Operator).order_by(Operator.display_name)).all()
      )
@@ -2169,7 +2255,7 @@ index 6727e0e..206fec0 100644
      return page(
          "Operators",
          f"<table><tr><th>Name</th><th>Role</th><th>Status</th></tr>{rows}</table>{form}<p>Local trusted operator mode. No external authentication is configured.</p>",
-@@ -1490,7 +1678,7 @@ def select_operator(db: Session = Depends(session)) -> HTMLResponse:
+@@ -1490,7 +1711,7 @@ def select_operator(db: Session = Depends(session)) -> HTMLResponse:
      )
      return page(
          "Select operator",
@@ -2178,7 +2264,7 @@ index 6727e0e..206fec0 100644
      )
  
  
-@@ -1512,9 +1700,10 @@ def my_queue(request: Request, db: Session = Depends(session)) -> Response:
+@@ -1512,9 +1733,10 @@ def my_queue(request: Request, db: Session = Depends(session)) -> Response:
              OperatorAssignment.status.in_(["assigned", "in_progress"]),
          )
      ).all()
@@ -2190,7 +2276,7 @@ index 6727e0e..206fec0 100644
              for assignment in assignments
          )
          or "<li>No assigned leads</li>"
-@@ -1533,16 +1722,42 @@ def safe_demo_path(demo: GeneratedDemo, db: Session) -> Path:
+@@ -1533,16 +1755,42 @@ def safe_demo_path(demo: GeneratedDemo, db: Session) -> Path:
      return path
  
  
@@ -2238,7 +2324,7 @@ index 6727e0e..206fec0 100644
  
  
  @router.get("/ui/artifacts/demo/{demo_id}/index", response_class=HTMLResponse)
-@@ -1591,14 +1806,20 @@ def preview_links(demo_id: uuid.UUID, db: Session = Depends(session)) -> HTMLRes
+@@ -1591,14 +1839,20 @@ def preview_links(demo_id: uuid.UUID, db: Session = Depends(session)) -> HTMLRes
      ).all()
      rows = (
          "".join(
@@ -2261,7 +2347,7 @@ index 6727e0e..206fec0 100644
      return page("Preview links", form + f"<ul>{rows}</ul>")
  
  
-@@ -1655,13 +1876,10 @@ def external_preview(token: str, request: Request, db: Session = Depends(session
+@@ -1655,13 +1909,10 @@ def external_preview(token: str, request: Request, db: Session = Depends(session
      if demo is None:
          raise HTTPException(404, "demo_not_found")
      try:
@@ -2277,7 +2363,7 @@ index 6727e0e..206fec0 100644
      except HTTPException:
          db.add(DemoPreviewAccessEvent(preview_link_id=link.id, outcome="blocked", event_metadata={"external": True}))
          db.commit()
-@@ -1863,7 +2081,7 @@ def pilot_readiness(pilot_id: uuid.UUID, db: Session = Depends(session)) -> HTML
+@@ -1863,7 +2114,7 @@ def pilot_readiness(pilot_id: uuid.UUID, db: Session = Depends(session)) -> HTML
          f"<tr><td>{esc(c['label'])}</td><td>{c['result']}</td><td>{'required' if c['required'] else 'informational'}</td></tr>"
          for c in summary["checks"]
      )
@@ -2286,7 +2372,7 @@ index 6727e0e..206fec0 100644
      guidance = {
          "operator_available": (
              "No active operator is configured.",
-@@ -2101,7 +2319,7 @@ def proposal_review_page(proposal_id: uuid.UUID, db: Session = Depends(session))
+@@ -2101,7 +2352,7 @@ def proposal_review_page(proposal_id: uuid.UUID, db: Session = Depends(session))
          raise HTTPException(status_code=404, detail="proposal_not_found")
      return page(
          "Review proposal",
@@ -2295,7 +2381,7 @@ index 6727e0e..206fec0 100644
      )
  
  
-@@ -2143,8 +2361,10 @@ def proposal_ready_queue(db: Session = Depends(session)) -> HTMLResponse:
+@@ -2143,8 +2394,10 @@ def proposal_ready_queue(db: Session = Depends(session)) -> HTMLResponse:
          .where(ProposalPackage.status.in_(["draft", "changes_requested"]))
          .order_by(ProposalPackage.created_at)
      ).all()
