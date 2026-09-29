@@ -72,9 +72,11 @@ Their code, licenses, source terms, and external platform policies must be revie
 Sprints 1–12 establish the API, migrations, discovery/audit/scoring/brief/demo
 pipeline, human review, consent-aware draft/readiness controls, manual CRM
 events, and pilot reporting. Sprint 13 hardens clean setup and repeatable local
-pilot operations. Maps scraping remains disabled by default and is never
-permission for outreach; external sending and public deployment remain out of
-scope.
+pilot operations. Sprints 28–30 productize the operator console, proposal and
+delivery workflows. Sprints 28.1–28.2 add Opportunity Cards, map-aware campaign
+views, and conservative Review Gap signals. Maps scraping remains disabled by
+default in `.env.example`; it is enabled only when a separately operated local
+scraper is deliberately configured. Discovery is never permission for outreach.
 
 ## Local bootstrap target
 
@@ -155,8 +157,16 @@ Sprint 20–21 adds calibration guidance and source-aware homepage enrichment.
 Enrichment is limited to already-known HTTP(S) homepages and stores normalized
 facts with provenance; it does not broad-crawl or send anything.
 
-Productization status (Sprints 28–30): use `/ui/system` or `GET /v1/system/status`
+Productization status (Sprints 28–30, 28.1 and 28.2): use `/ui/system` or `GET /v1/system/status`
 for non-secret operations status. Proposal and delivery workflows have synthetic
 smoke coverage via `scripts/smoke_proposals.py` and `scripts/smoke_delivery.py`.
 See the operator, deployment, backup/restore, troubleshooting, and v1 release
 documents under `docs/` before operating outside a developer laptop.
+
+The current operator workflow starts at `/ui/opportunities`. Opportunity Cards
+surface the next safe action from discovery, audit, score, demo, proposal, and
+delivery evidence. Campaign pages include the Google Maps area plus LBOE lead
+markers when persisted coordinates are available. After an audit, the business
+workspace exposes an explicit refresh action so score and brief evidence do not
+remain stale. Optional enrichment is shown only after the required score and
+brief baseline exists.

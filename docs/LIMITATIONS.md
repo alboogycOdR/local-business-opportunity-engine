@@ -26,3 +26,8 @@ pilot had no manual contacts. Batch-2 profiles are operator configuration
 artifacts and are not automatically loaded or launched.
 
 - Proposal packs use pricing and timeline placeholders and require operator review; they are not quotes or contracts.
+- Campaign maps add LBOE lead markers only when discovery observations contain
+  coordinates. Older imported records may have no marker; automatic geocoding is
+  not enabled.
+- The private VPS profile relies on Tailscale network isolation. A public
+  deployment must enable authentication and HTTPS.
