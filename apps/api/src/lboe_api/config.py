@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     log_level: str = "INFO"
     database_url: str = "postgresql+psycopg://lboe:lboe_dev_only@localhost:5432/lboe"
+    database_pool_timeout_seconds: float = Field(default=2.0, ge=0.1, le=10.0)
     redis_url: str = "redis://localhost:6379/0"
     auto_create_schema: bool = False
     maps_scraper_enabled: bool = Field(

@@ -12,6 +12,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.types import JSON, TypeDecorator
 
+from lboe_api.config import Settings
+
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
@@ -827,11 +829,19 @@ class DemoPreviewAccessEvent(Base):
     event_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JsonType, default=dict)
 
 
-def make_engine(database_url: str) -> Any:
+def make_engine(database_url: str, *, pool_timeout_seconds: float | None = None) -> Any:
+    timeout = pool_timeout_seconds if pool_timeout_seconds is not None else Settings().database_pool_timeout_seconds
+    if not 0.1 <= timeout <= 10.0:
+        raise ValueError("pool_timeout_seconds must be between 0.1 and 10 seconds")
     kwargs: dict[str, Any] = {"pool_pre_ping": True, "future": True}
     if database_url.startswith("sqlite"):
-        kwargs.update({"connect_args": {"check_same_thread": False}, "poolclass": StaticPool})
+        kwargs["connect_args"] = {"check_same_thread": False}
+        if ":memory:" in database_url:
+            kwargs["poolclass"] = StaticPool
+        else:
+            kwargs["pool_timeout"] = timeout
     elif database_url.startswith("postgresql"):
+        kwargs["pool_timeout"] = timeout
         # timestamp-without-time-zone columns are converted using the session zone; pin it.
         kwargs["connect_args"] = {"options": "-c timezone=UTC"}
     return create_engine(database_url, **kwargs)
