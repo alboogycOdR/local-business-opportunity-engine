@@ -1197,6 +1197,10 @@ def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLRespons
         return not_outreach_ready_queue(db)
     if queue_name == "weak-evidence":
         return weak_evidence_queue(db)
+    if queue_name == "proposal-ready":
+        return proposal_ready_queue(db)
+    if queue_name == "delivery":
+        return delivery_queue(db)
     mapping = {
         "demo-review": (
             "Demo review",

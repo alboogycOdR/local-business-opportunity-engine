@@ -23,6 +23,8 @@ def test_operator_ui_pages_and_safety_banner() -> None:
             "/ui/reports/pilot",
             f"/ui/campaigns/{campaign['id']}/reports/pilot",
             "/ui/queues",
+            "/ui/queues/proposal-ready",
+            "/ui/queues/delivery",
             "/ui/queues/demo-review",
             "/ui/operators",
             "/ui/queues/no-demo-reason",
