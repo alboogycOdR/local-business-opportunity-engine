@@ -917,7 +917,9 @@ def business_detail(
     # A demo is generated from a persisted Business Brief. Keep the UI honest
     # about that prerequisite instead of showing a demo action that can only
     # return ``brief_required`` from the API.
-    if brief is None:
+    if raw_action == "audit_required" and latest_audit is None:
+        next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='audit'><button class='button-primary'>Run website audit</button></form>"
+    elif brief is None:
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='brief'><button class='button-primary'>Prepare business brief</button></form>"
     elif raw_action in {"conversion_upgrade_offer", "technical_cleanup_offer", "generate_demo"}:
         action_value = "generate_demo"
@@ -958,13 +960,27 @@ async def business_action(
     business_id: uuid.UUID, action: str = Form(...), db: Session = Depends(session)
 ) -> RedirectResponse:
     """Run one explicit, safe operator action and return to the business workspace."""
-    from lboe_api.main import ScoreRequestBody, create_brief, create_demo, create_proposal, score_business
+    from lboe_api.main import (
+        AuditRequestBody,
+        ScoreRequestBody,
+        audit_business,
+        create_brief,
+        create_demo,
+        create_proposal,
+        score_business,
+    )
 
     if db.get(Business, business_id) is None:
         raise HTTPException(404, "business_not_found")
     try:
         if action == "score":
             await score_business(business_id, ScoreRequestBody(idempotency_key="ui"), db)
+        elif action == "audit":
+            await audit_business(
+                business_id,
+                AuditRequestBody(timeout_seconds=30, max_pages=2, idempotency_key="ui"),
+                db,
+            )
         elif action == "brief":
             await create_brief(business_id, {"idempotency_key": "ui"}, db)
         elif action == "generate_demo":
