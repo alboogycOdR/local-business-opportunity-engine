@@ -7,11 +7,14 @@ job UUID. The worker supports `DISCOVER_CAMPAIGN`, `AUDIT_WEBSITE`, and
 `ENRICH_BUSINESS`, with one consumer and one Chromium audit at a time.
 
 The worker container has a 1 GiB memory limit and a 1 CPU limit. Audit artifacts
-are written to the shared `lboe_artifacts` volume and each browser audit stores
-screenshots below `artifacts/audits/<business_id>/<artifact_run_id>/`. A worker
-healthcheck verifies its poll heartbeat. The worker does not automatically retry
-failed or interrupted jobs: inspect the PostgreSQL job row before an operator
-creates a new job, since repeating external discovery can duplicate provider work.
+are written through the host bind mount `./artifacts:/app/artifacts`; with the
+default API setting `audit_artifact_root='artifacts/audits'`, a host-run API and
+the Compose worker see the same files under `<repository>/artifacts/audits/`.
+Each browser audit stores screenshots below
+`artifacts/audits/<business_id>/<artifact_run_id>/`. A worker healthcheck verifies
+its poll heartbeat. The worker does not automatically retry failed or interrupted
+jobs: inspect the PostgreSQL job row before an operator creates a new job, since
+repeating external discovery can duplicate provider work.
 
 Run locally with `docker compose up --build`. Redis group name and stream are
 `lboe-workers` and `lboe:jobs:v1`. API integration should first commit a
@@ -38,5 +41,7 @@ not in `queued` status is acknowledged without execution. Interrupted `running`
 jobs are intentionally left for operator inspection; there is no automatic
 replay of potentially non-idempotent external work.
 
-The API deployment must mount `lboe_artifacts` at the same artifact root as the
-worker if API routes serve audit screenshots from local paths.
+This host bind mount is the local development topology. A separately deployed
+API and worker must use a shared persistent filesystem mounted at the same
+`audit_artifact_root` in both containers, or a shared object-storage backend;
+the Compose bind mount does not provide cross-host production storage.
