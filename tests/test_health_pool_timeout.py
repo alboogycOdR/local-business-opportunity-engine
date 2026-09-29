@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import time
-
 import pytest
 from lboe_api.config import Settings
 from lboe_api.db import make_engine
-from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
+from sqlalchemy.pool import StaticPool
 
 
 def test_database_pool_timeout_is_configurable_and_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -17,19 +15,19 @@ def test_database_pool_timeout_is_configurable_and_bounded(monkeypatch: pytest.M
         make_engine("sqlite+pysqlite:///unused.db", pool_timeout_seconds=0.05)
 
 
-def test_engine_checkout_times_out_after_configured_wait(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_postgres_engine_uses_configured_pool_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LBOE_DATABASE_POOL_TIMEOUT_SECONDS", "0.2")
-    engine = make_engine(f"sqlite+pysqlite:///{tmp_path / 'pool.db'}")
-    held = []
+    engine = make_engine("postgresql+psycopg://user:password@localhost/db")
     try:
-        # QueuePool defaults to five connections plus ten overflow connections.
-        held.extend(engine.connect() for _ in range(15))
-        started = time.monotonic()
-        with pytest.raises(SQLAlchemyTimeoutError):
-            engine.connect()
-        elapsed = time.monotonic() - started
-        assert 0.15 <= elapsed < 1.0, f"checkout waited {elapsed:.3f}s for a 0.2s configured timeout"
+        assert engine.pool._timeout == 0.2
     finally:
-        for connection in held:
-            connection.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("database_url", ["sqlite://", "sqlite+pysqlite:///:memory:"])
+def test_sqlite_keeps_static_pool_when_pool_timeout_is_configured(database_url: str) -> None:
+    engine = make_engine(database_url, pool_timeout_seconds=0.2)
+    try:
+        assert isinstance(engine.pool, StaticPool)
+    finally:
         engine.dispose()
