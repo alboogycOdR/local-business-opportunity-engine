@@ -6,15 +6,38 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, Text, UniqueConstraint, create_engine
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, String, Text, UniqueConstraint, create_engine
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
-from sqlalchemy.types import JSON
+from sqlalchemy.types import JSON, TypeDecorator
 
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+class UtcDateTime(TypeDecorator[datetime]):
+    """Timezone-aware UTC datetimes on every dialect.
+
+    The PostgreSQL migrations declare ``TIMESTAMPTZ``. SQLite's ``create_all`` test schema
+    has no timezone-aware storage type, so it drops offsets. Normalising to UTC on the way in
+    and attaching UTC on the way out keeps instants unambiguous across both dialects; a
+    follow-up due "09:00+02:00" is stored as 07:00 UTC and displayed as 09:00 SAST.
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect: Any) -> datetime | None:
+        if value is None:
+            return None
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+    def process_result_value(self, value: datetime | None, dialect: Any) -> datetime | None:
+        if value is None:
+            return None
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 class Base(DeclarativeBase):
@@ -31,7 +54,7 @@ class Campaign(Base):
     vertical: Mapped[str] = mapped_column(String(100))
     geography: Mapped[str | None] = mapped_column(String(200), nullable=True)
     policy: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class PilotRun(Base):
@@ -52,10 +75,10 @@ class PilotRun(Base):
     daily_manual_contact_cap: Mapped[int] = mapped_column()
     daily_readiness_approval_cap: Mapped[int] = mapped_column()
     created_by_operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+    activated_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
 
 
 class PilotSourcePolicyAcknowledgement(Base):
@@ -64,7 +87,7 @@ class PilotSourcePolicyAcknowledgement(Base):
     pilot_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("pilot_runs.id"), index=True)
     operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
     policy_version: Mapped[str] = mapped_column(String(80))
-    acknowledged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    acknowledged_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
     acknowledgement_text: Mapped[str] = mapped_column(Text)
 
 
@@ -84,8 +107,8 @@ class PilotRetrospective(Base):
     reply_quality: Mapped[str] = mapped_column(Text, default="")
     meeting_quality: Mapped[str] = mapped_column(Text, default="")
     next_sprint_recommendation: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class PilotExportRun(Base):
@@ -97,7 +120,7 @@ class PilotExportRun(Base):
     files: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
     warnings: Mapped[list[Any]] = mapped_column(JsonType, default=list)
     created_by_operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class Business(Base):
@@ -114,8 +137,8 @@ class Business(Base):
     normalized_phone: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
     normalized_domain: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     state: Mapped[str] = mapped_column(String(40), default="DISCOVERED", index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow, onupdate=utcnow)
 
 
 class BusinessExternalIdentity(Base):
@@ -125,7 +148,7 @@ class BusinessExternalIdentity(Base):
     business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
     source: Mapped[str] = mapped_column(String(80))
     source_id: Mapped[str] = mapped_column(String(300))
-    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    observed_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
     confidence: Mapped[float] = mapped_column(Float)
 
 
@@ -143,8 +166,8 @@ class SourceObservation(Base):
     field: Mapped[str] = mapped_column(String(200))
     source_type: Mapped[str] = mapped_column(String(80))
     source_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
     storage_policy: Mapped[str] = mapped_column(String(30))
     confidence: Mapped[float] = mapped_column(Float)
     value: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -166,8 +189,8 @@ class EnrichmentRun(Base):
     source_type: Mapped[str] = mapped_column(String(80))
     status: Mapped[str] = mapped_column(String(40))
     adapter_version: Mapped[str] = mapped_column(String(100))
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
 
 
 class EnrichmentFactRow(Base):
@@ -180,7 +203,7 @@ class EnrichmentFactRow(Base):
     fact_type: Mapped[str] = mapped_column(String(100))
     value: Mapped[str] = mapped_column(Text)
     confidence: Mapped[float] = mapped_column(Float)
-    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    observed_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
     evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
     policy: Mapped[str] = mapped_column(String(40), default="persistent")
 
@@ -191,7 +214,7 @@ class SuppressionEntry(Base):
     business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
     reason: Mapped[str] = mapped_column(String(500))
     channel: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class PipelineEvent(Base):
@@ -202,7 +225,7 @@ class PipelineEvent(Base):
     to_state: Mapped[str] = mapped_column(String(40))
     actor: Mapped[str] = mapped_column(String(100), default="system")
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class Job(Base):
@@ -212,7 +235,7 @@ class Job(Base):
     job_type: Mapped[str] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(30), default="queued")
     payload: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class DedupeEvidence(Base):
@@ -231,7 +254,7 @@ class DedupeEvidence(Base):
     reason: Mapped[str] = mapped_column(String(500))
     confidence: Mapped[float] = mapped_column(Float)
     merged: Mapped[bool] = mapped_column(default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class DiscoveryCandidate(Base):
@@ -244,7 +267,7 @@ class DiscoveryCandidate(Base):
     normalized_payload: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
     provenance: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
     dedupe_evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class Website(Base):
@@ -256,7 +279,7 @@ class Website(Base):
     final_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     http_status: Mapped[int | None] = mapped_column(nullable=True)
     resolution_status: Mapped[str] = mapped_column(String(40))
-    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    checked_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class AuditRun(Base):
@@ -265,8 +288,8 @@ class AuditRun(Base):
     business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
     website_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("websites.id"), nullable=True, index=True)
     auditor_version: Mapped[str] = mapped_column(String(100))
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="running", index=True)
     error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     technical_metadata: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
@@ -285,7 +308,7 @@ class AuditFinding(Base):
     evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
     source_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     confidence: Mapped[float] = mapped_column(Float)
-    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    observed_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
     auditor_version: Mapped[str] = mapped_column(String(100))
 
 
@@ -296,8 +319,8 @@ class AuditArtifact(Base):
     kind: Mapped[str] = mapped_column(String(50))
     path: Mapped[str] = mapped_column(String(1000))
     mime_type: Mapped[str] = mapped_column(String(100))
-    byte_size: Mapped[int | None] = mapped_column(nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    byte_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class OpportunityScore(Base):
@@ -309,7 +332,7 @@ class OpportunityScore(Base):
     score: Mapped[int] = mapped_column()
     band: Mapped[str] = mapped_column(String(20))
     recommended_next_action: Mapped[str] = mapped_column(String(50))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class OpportunityComponent(Base):
@@ -345,7 +368,7 @@ class BusinessBrief(Base):
     summary: Mapped[str] = mapped_column(Text)
     recommended_next_action: Mapped[str] = mapped_column(String(50))
     confidence: Mapped[float] = mapped_column(Float)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class BusinessBriefFact(Base):
@@ -394,7 +417,7 @@ class GeneratedDemo(Base):
     status: Mapped[str] = mapped_column(String(30), index=True)
     preview_path: Mapped[str] = mapped_column(String(1000))
     preview_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class GeneratedDemoSection(Base):
@@ -435,7 +458,7 @@ class DemoQaRun(Base):
     demo_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("generated_demos.id"), index=True)
     status: Mapped[str] = mapped_column(String(30))
     checks: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class DemoReview(Base):
@@ -446,7 +469,7 @@ class DemoReview(Base):
     decision: Mapped[str] = mapped_column(String(40))
     reviewer: Mapped[str] = mapped_column(String(200))
     notes: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
     resulting_demo_status: Mapped[str] = mapped_column(String(40))
     resulting_business_state: Mapped[str] = mapped_column(String(40))
 
@@ -472,7 +495,7 @@ class OutreachDraftPackage(Base):
     offer_type: Mapped[str] = mapped_column(String(60))
     offer_angle: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(30), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class OutreachDraftMessage(Base):
@@ -508,7 +531,7 @@ class OutreachReadinessReview(Base):
     consent_basis_type: Mapped[str] = mapped_column(String(60))
     consent_basis_notes: Mapped[str] = mapped_column(Text, default="")
     resulting_business_state: Mapped[str] = mapped_column(String(40))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class OutreachChannelApproval(Base):
@@ -545,11 +568,11 @@ class OutreachExecutionRecord(Base):
     outreach_draft_message_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("outreach_draft_messages.id"), index=True)
     channel: Mapped[str] = mapped_column(String(30))
     operator: Mapped[str] = mapped_column(String(200))
-    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    sent_at: Mapped[datetime] = mapped_column(UtcDateTime())
     external_reference: Mapped[str | None] = mapped_column(String(500), nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
     evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
     resulting_business_state: Mapped[str] = mapped_column(String(40))
 
 
@@ -563,7 +586,7 @@ class LeadCrmEvent(Base):
     event_type: Mapped[str] = mapped_column(String(40))
     channel: Mapped[str] = mapped_column(String(30))
     operator: Mapped[str] = mapped_column(String(200))
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    occurred_at: Mapped[datetime] = mapped_column(UtcDateTime())
     summary: Mapped[str] = mapped_column(Text, default="")
     notes: Mapped[str] = mapped_column(Text, default="")
     next_step: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -571,7 +594,7 @@ class LeadCrmEvent(Base):
     objection_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
     evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
     resulting_business_state: Mapped[str] = mapped_column(String(40))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class ManualFollowUpTask(Base):
@@ -580,10 +603,10 @@ class ManualFollowUpTask(Base):
     business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
     operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
     reason: Mapped[str] = mapped_column(Text)
-    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    due_at: Mapped[datetime] = mapped_column(UtcDateTime())
     status: Mapped[str] = mapped_column(String(30), default="open")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
 
 
 class OutreachObjection(Base):
@@ -593,7 +616,7 @@ class OutreachObjection(Base):
     operator: Mapped[str] = mapped_column(String(200))
     code: Mapped[str] = mapped_column(String(40))
     notes: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class ProposalPackage(Base):
@@ -608,7 +631,7 @@ class ProposalPackage(Base):
     proposal_type: Mapped[str] = mapped_column(String(60))
     status: Mapped[str] = mapped_column(String(40), index=True)
     summary: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class ProposalSection(Base):
@@ -651,7 +674,7 @@ class ProposalReviewEvent(Base):
     reviewer: Mapped[str] = mapped_column(String(200))
     notes: Mapped[str] = mapped_column(Text, default="")
     checks: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class ProposalExport(Base):
@@ -660,7 +683,7 @@ class ProposalExport(Base):
     proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposal_packages.id"), index=True)
     status: Mapped[str] = mapped_column(String(30))
     files: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class DeliveryProject(Base):
@@ -673,9 +696,9 @@ class DeliveryProject(Base):
     title: Mapped[str] = mapped_column(String(300))
     summary: Mapped[str] = mapped_column(Text, default="")
     created_by_operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow, onupdate=utcnow)
+    closed_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
 
 
 class DeliveryChecklistItem(Base):
@@ -686,7 +709,7 @@ class DeliveryChecklistItem(Base):
     code: Mapped[str] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(30), default="pending")
     notes: Mapped[str] = mapped_column(Text, default="")
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow, onupdate=utcnow)
 
 
 class DeliveryMilestone(Base):
@@ -697,8 +720,8 @@ class DeliveryMilestone(Base):
     status: Mapped[str] = mapped_column(String(30))
     operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
 
 
 class DeliveryApproval(Base):
@@ -710,7 +733,7 @@ class DeliveryApproval(Base):
     operator_notes: Mapped[str] = mapped_column(Text, default="")
     client_assertion: Mapped[str] = mapped_column(Text, default="")
     artifact_reference: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class DeliveryExport(Base):
@@ -719,7 +742,7 @@ class DeliveryExport(Base):
     delivery_project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("delivery_projects.id"), index=True)
     status: Mapped[str] = mapped_column(String(30))
     files: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class Operator(Base):
@@ -729,7 +752,7 @@ class Operator(Base):
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     role: Mapped[str] = mapped_column(String(30), default="operator")
     active: Mapped[bool] = mapped_column(default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class OperatorSession(Base):
@@ -738,9 +761,9 @@ class OperatorSession(Base):
     operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
     session_hash: Mapped[str] = mapped_column(String(128), index=True)
     csrf_hash: Mapped[str] = mapped_column(String(128))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime())
+    revoked_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
 
 
 class OperatorAssignment(Base):
@@ -750,8 +773,8 @@ class OperatorAssignment(Base):
     operator_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("operators.id"), index=True)
     assigned_by_operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="assigned")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class OperatorComment(Base):
@@ -761,7 +784,7 @@ class OperatorComment(Base):
     operator_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("operators.id"), index=True)
     comment_type: Mapped[str] = mapped_column(String(30), default="general")
     body: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class OperatorAuditEvent(Base):
@@ -775,7 +798,7 @@ class OperatorAuditEvent(Base):
     before_data: Mapped[dict[str, Any] | None] = mapped_column(JsonType, nullable=True)
     after_data: Mapped[dict[str, Any] | None] = mapped_column(JsonType, nullable=True)
     event_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JsonType, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
 class DemoPreviewLink(Base):
@@ -787,17 +810,17 @@ class DemoPreviewLink(Base):
     label: Mapped[str] = mapped_column(String(200), default="Concept preview")
     permission: Mapped[str] = mapped_column(String(30), default="external_view")
     status: Mapped[str] = mapped_column(String(30), default="active")
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
     created_by_operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+    revoked_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
 
 
 class DemoPreviewAccessEvent(Base):
     __tablename__ = "demo_preview_access_events"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     preview_link_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("demo_preview_links.id"), index=True)
-    accessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    accessed_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
     ip_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     user_agent_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     outcome: Mapped[str] = mapped_column(String(40))
@@ -808,6 +831,9 @@ def make_engine(database_url: str) -> Any:
     kwargs: dict[str, Any] = {"pool_pre_ping": True, "future": True}
     if database_url.startswith("sqlite"):
         kwargs.update({"connect_args": {"check_same_thread": False}, "poolclass": StaticPool})
+    elif database_url.startswith("postgresql"):
+        # timestamp-without-time-zone columns are converted using the session zone; pin it.
+        kwargs["connect_args"] = {"options": "-c timezone=UTC"}
     return create_engine(database_url, **kwargs)
 
 

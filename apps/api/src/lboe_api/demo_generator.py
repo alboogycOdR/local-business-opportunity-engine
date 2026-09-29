@@ -52,10 +52,17 @@ class RenderedDemo:
     metadata: dict[str, Any]
     sections: list[DemoSection]
     claims: list[DemoClaim]
+    # Verified business facts rendered verbatim. QA rules about *generated* marketing copy
+    # (prices, superlatives, testimonials) must not fire on the business's own name/address.
+    verified_values: tuple[str, ...] = ()
 
 
 def _fact(facts: list[dict[str, Any]], label: str) -> dict[str, Any] | None:
     return next((item for item in facts if item.get("label") == label), None)
+
+
+def _anchor(section_type: str) -> str:
+    return section_type.replace("_", "-")
 
 
 def render_demo(
@@ -67,7 +74,10 @@ def render_demo(
     facts = [fact for values in brief.get("facts", {}).values() for fact in values]
     name = str(business.display_name)
     category = str(business.category or "local business")
-    address_fact = _fact(facts, "address")
+    # Briefs label the address "Address/locality"; accept the legacy "address" label too.
+    address_fact = _fact(facts, "Address/locality") or _fact(facts, "address")
+    if address_fact is not None and not address_fact.get("value"):
+        address_fact = None
     phone_fact = _fact(facts, "phone")
     location = str(address_fact["value"]) if address_fact else (business.locality or "your local area")
     phone = str(phone_fact["value"]) if phone_fact else ""
@@ -143,22 +153,11 @@ def render_demo(
         ),
     ]
     section_html = "\n".join(
-        f'<section class="{html.escape(section.section_type)}"><h2>{html.escape(section.heading)}</h2>'
-        f"<p>{html.escape(section.body)}</p></section>"
+        f'<section class="{html.escape(section.section_type)}" id="{html.escape(_anchor(section.section_type))}">'
+        f"<h2>{html.escape(section.heading)}</h2><p>{html.escape(section.body)}</p></section>"
         for section in sections
     )
     page_title = f"{html.escape(name)} — concept preview"
-    page = (
-        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f'<title>{page_title}</title><link rel="stylesheet" href="styles.css"></head>'
-        f'<body><main><header><p class="eyebrow">Independent concept preview</p>'
-        f"<h1>{html.escape(name)}</h1><p>{html.escape(category)} concept for {html.escape(location)}.</p>"
-        '<nav><a href="#booking">Booking placeholder</a> <a href="#whatsapp">WhatsApp placeholder</a>'
-        '<a href="#call">Call placeholder</a></nav></header>'
-        f"{section_html}<footer><p>Concept preview prepared independently for demonstration. "
-        "Not the official website of this business.</p></footer></main></body></html>"
-    )
     css = (
         ":root{font-family:system-ui,sans-serif;color:#17202a;background:#f8f5f0}"
         "body{margin:0}main{max-width:960px;margin:auto;padding:2rem}"
@@ -166,7 +165,20 @@ def render_demo(
         "a{display:inline-block;margin:.25rem;padding:.65rem 1rem;border:1px solid #52616b;"
         "border-radius:999px;color:#17202a}"
         ".eyebrow{letter-spacing:.08em;text-transform:uppercase;font-size:.8rem}"
+        ".concept_banner,.concept-banner{background:#fff4cc;border:2px solid #8a6d00}"
         "@media(max-width:600px){main{padding:1rem}h1{font-size:2rem}a{display:block;text-align:center}}"
+    )
+    page = (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<meta name="robots" content="noindex, nofollow">'
+        f"<title>{page_title}</title><style>{css}</style></head>"
+        f'<body><main><header><p class="eyebrow">Independent concept preview</p>'
+        f"<h1>{html.escape(name)}</h1><p>{html.escape(category)} concept for {html.escape(location)}.</p>"
+        '<nav aria-label="Concept sections"><a href="#primary-cta">Booking or WhatsApp (to be confirmed)</a> '
+        '<a href="#location-contact">Location and contact</a></nav></header>'
+        f"{section_html}<footer><p>Concept preview prepared independently for demonstration. "
+        "Not the official website of this business.</p></footer></main></body></html>"
     )
     return RenderedDemo(
         html=page,
@@ -174,6 +186,7 @@ def render_demo(
         metadata={"demo_id": str(demo_id), "version": VERSION, "demo_type": demo_type, "business_id": str(business.id)},
         sections=sections,
         claims=claims,
+        verified_values=tuple(value for value in (name, category, location, phone) if value),
     )
 
 
@@ -198,22 +211,31 @@ def write_artifacts(root: Path, demo_id: uuid.UUID, rendered: RenderedDemo) -> l
 def qa_demo(root: Path, demo_id: uuid.UUID, rendered: RenderedDemo) -> tuple[str, dict[str, bool]]:
     directory = root / "demos" / str(demo_id)
     content = (directory / "index.html").read_text(encoding="utf-8")
-    lowered = content.lower()
+    # Compare against the text a visitor sees (entities decoded), so "&" and "'" in a
+    # business name no longer fail the name check.
+    lowered = html.unescape(re.sub(r"<style>.*?</style>", " ", content, flags=re.S)).lower()
+    # Copy rules target LBOE-generated marketing text. Verified facts (name, category,
+    # address, phone) are the business's own words and are removed before those rules run,
+    # otherwise "Hair 2 Go", "Floor 1" or "concept for 12 Kloof Street" read as prices.
+    generated = lowered
+    for value in sorted(rendered.verified_values, key=len, reverse=True):
+        generated = generated.replace(value.lower(), " ")
     checks: dict[str, bool] = {
         "concept_banner_present": "concept preview prepared independently" in lowered,
         "business_name_present": bool(rendered.claims and rendered.claims[0].claim_text.lower() in lowered),
-        "prohibited_phrases_absent": not any(phrase in lowered for phrase in PROHIBITED),
-        "official_site_claim_absent": not re.search(r"(?<!not the )official website", lowered),
-        "no_fake_testimonials": "testimonial" not in lowered and "review quote" not in lowered,
-        "no_fake_prices": not re.search(r"(?:\$|r)\s?\d+", lowered),
+        "prohibited_phrases_absent": not any(phrase in generated for phrase in PROHIBITED),
+        "official_site_claim_absent": not re.search(r"(?<!not the )official website", generated),
+        "no_fake_testimonials": "testimonial" not in generated and "review quote" not in generated,
+        "no_fake_prices": not re.search(r"(?:\$|\br)\s?\d+", generated),
         "claims_have_evidence": all(
             claim.evidence or claim.claim_type in {"generic", "placeholder"} for claim in rendered.claims
         ),
         "html_exists": (directory / "index.html").is_file(),
         "css_exists": (directory / "styles.css").is_file(),
         "metadata_exists": (directory / "metadata.json").is_file(),
-        "no_external_forms": "<form" not in lowered,
-        "no_external_tracking": "<script" not in lowered,
+        # Markup checks run on the raw HTML: an escaped "<script>" in a name is text, not a tag.
+        "no_external_forms": "<form" not in content.lower(),
+        "no_external_tracking": "<script" not in content.lower(),
     }
     return ("passed" if all(checks.values()) else "failed", checks)
 
