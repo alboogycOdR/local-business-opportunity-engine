@@ -10,6 +10,7 @@ def test_openapi_schema_contains_pilot_surface() -> None:
     for path in (
         "/v1/campaigns",
         "/v1/campaigns/{campaign_id}/discover",
+        "/v1/jobs/{job_id}",
         "/v1/businesses/{business_id}/audit",
         "/v1/businesses/{business_id}/score",
         "/v1/businesses/{business_id}/brief",

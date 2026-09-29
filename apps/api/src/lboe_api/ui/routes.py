@@ -6,15 +6,15 @@ import hmac
 import html
 import secrets
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlencode
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from sqlalchemy import exists, select
+from sqlalchemy import Select, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from lboe_api.db import (
@@ -33,6 +33,7 @@ from lboe_api.db import (
     DemoQaRun,
     EnrichmentRun,
     GeneratedDemo,
+    Job,
     LeadCrmEvent,
     ManualFollowUpTask,
     Operator,
@@ -50,6 +51,7 @@ from lboe_api.db import (
     PilotRetrospective,
     PilotRun,
     PilotSourcePolicyAcknowledgement,
+    PipelineEvent,
     ProposalPackage,
     SourceObservation,
     SuppressionEntry,
@@ -68,12 +70,19 @@ from lboe_api.pilot_service import (
 )
 from lboe_api.reporting_service import build_pilot_report
 
+from .presentation import fmt_dt, state_label, status_label
+
 router = APIRouter()
+LEADS_PER_PAGE = 50
 DISCLAIMER = "Concept preview prepared independently for demonstration. Not the official website of this business."
 
 
-def session() -> Session:
-    return SessionLocal()
+def session() -> Iterator[Session]:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 @router.get("/ui/login", response_class=HTMLResponse)
@@ -135,9 +144,44 @@ def esc(value: Any) -> str:
     return html.escape("" if value is None else str(value))
 
 
+NAV_ITEMS = (
+    ("/ui", "Dashboard"),
+    ("/ui/opportunities", "Opportunities"),
+    ("/ui/campaigns", "Campaigns"),
+    ("/ui/queues", "Queues"),
+    ("/ui/queues/proposal-ready", "Proposals"),
+    ("/ui/queues/delivery", "Delivery"),
+    ("/ui/pilots", "Pilots"),
+    ("/ui/reports/pilot", "Reports"),
+    ("/ui/operators", "Admin"),
+    ("/ui/system", "System"),
+)
+
+
+def _accessible_tables(body: str) -> str:
+    """Column headers get scope; wide tables get a focusable, labelled scroll region."""
+    body = body.replace("<th>", "<th scope='col'>")
+    body = body.replace(
+        "<table>", "<div class='table-scroll' role='region' aria-label='Scrollable table' tabindex='0'><table>"
+    )
+    return body.replace("</table>", "</table></div>")
+
+
 def page(title: str, body: str) -> HTMLResponse:
+    nav = "".join(f"<a href='{href}'>{label}</a>" for href, label in NAV_ITEMS)
+    # Pages that render their own hero heading keep it as the single <h1>.
+    heading = "" if "<h1" in body else f"<h1>{esc(title)}</h1>"
     return HTMLResponse(
-        f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{esc(title)} · LBOE</title><link rel='stylesheet' href='/ui/static/ui.css'></head><body><header><a href='/ui'><strong>LBOE Operator Cockpit</strong></a><nav><a href='/ui'>Dashboard</a><a href='/ui/opportunities'>Opportunities</a><a href='/ui/campaigns'>Campaigns</a><a href='/ui/queues'>Queues</a><a href='/ui/queues/proposal-ready'>Proposals</a><a href='/ui/queues/delivery'>Delivery</a><a href='/ui/pilots'>Pilots</a><a href='/ui/reports/pilot'>Reports</a><a href='/ui/operators'>Admin</a><a href='/ui/system'>System</a></nav></header><div class='safety'>System delivery is disabled. LBOE does not send email, WhatsApp, SMS, review requests, or CRM messages.</div><main><p class='muted'><a href='/ui'>Dashboard</a> / {esc(title)}</p><h1>{esc(title)}</h1>{body}</main></body></html>"""
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        f"<title>{esc(title)} · LBOE</title><link rel='stylesheet' href='/ui/static/ui.css'></head><body>"
+        "<a class='skip-link' href='#main'>Skip to main content</a>"
+        f"<header><a class='brand' href='/ui'><strong>LBOE Operator Cockpit</strong></a>"
+        f"<nav aria-label='Primary'>{nav}</nav></header>"
+        "<aside class='safety' aria-label='Safety notice'>System delivery is disabled. LBOE does not send email, "
+        "WhatsApp, SMS, review requests, or CRM messages.</aside>"
+        f"<main id='main' tabindex='-1'><nav class='breadcrumb muted' aria-label='Breadcrumb'><a href='/ui'>Dashboard</a> / "
+        f"<span aria-current='page'>{esc(title)}</span></nav>{heading}{_accessible_tables(body)}</main></body></html>"
     )
 
 
@@ -165,14 +209,9 @@ def metric_cards(report: dict[str, Any]) -> str:
     )
 
 
-def _review_metrics(db: Session, business_id: uuid.UUID) -> dict[str, float | int | None]:
-    """Read optional rating/review-count facts without changing the canonical model."""
+def _review_metrics_from(observations: Sequence[SourceObservation]) -> dict[str, float | int | None]:
+    """Latest rating / review-count facts from observations ordered newest first."""
 
-    observations = db.scalars(
-        select(SourceObservation)
-        .where(SourceObservation.business_id == business_id)
-        .order_by(SourceObservation.observed_at.desc())
-    ).all()
     rating: float | None = None
     review_count: int | None = None
     for observation in observations:
@@ -199,6 +238,124 @@ def _review_metrics(db: Session, business_id: uuid.UUID) -> dict[str, float | in
         if rating is not None and review_count is not None:
             break
     return {"rating": rating, "review_count": review_count}
+
+
+def _review_metrics(db: Session, business_id: uuid.UUID) -> dict[str, float | int | None]:
+    """Read optional rating/review-count facts without changing the canonical model."""
+
+    return _review_metrics_batch(db, [business_id])[business_id]
+
+
+_IN_CHUNK = 5000
+
+
+def _chunks(values: Sequence[Any]) -> Iterator[Sequence[Any]]:
+    for start in range(0, len(values), _IN_CHUNK):
+        yield values[start : start + _IN_CHUNK]
+
+
+def _review_metrics_batch(db: Session, business_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, dict[str, Any]]:
+    grouped: dict[uuid.UUID, list[SourceObservation]] = {business_id: [] for business_id in business_ids}
+    for chunk in _chunks(list(business_ids)):
+        rows = db.scalars(
+            select(SourceObservation)
+            .where(
+                SourceObservation.business_id.in_(chunk),
+                or_(
+                    func.lower(SourceObservation.field).like("%rating%"),
+                    func.lower(SourceObservation.field).like("%review%"),
+                ),
+            )
+            .order_by(SourceObservation.observed_at.desc())
+        ).all()
+        for row in rows:
+            grouped[row.business_id].append(row)
+    return {business_id: _review_metrics_from(rows) for business_id, rows in grouped.items()}
+
+
+def _latest_per_business(
+    db: Session, model: Any, order_column: Any, business_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, Any]:
+    """Newest row of ``model`` per business in one windowed query (per 5,000 ids)."""
+
+    latest: dict[uuid.UUID, Any] = {}
+    for chunk in _chunks(list(business_ids)):
+        rank = (
+            func.row_number()
+            .over(partition_by=model.business_id, order_by=(order_column.desc(), model.id.desc()))
+            .label("rank")
+        )
+        ranked = select(model.id.label("id"), rank).where(model.business_id.in_(chunk)).subquery()
+        newest: Sequence[Any] = db.scalars(
+            select(model).join(ranked, model.id == ranked.c.id).where(ranked.c.rank == 1)
+        ).all()
+        for row in newest:
+            latest[row.business_id] = row
+    return latest
+
+
+def _rows_for(db: Session, model: Any, column: Any, keys: Sequence[Any], order_by: Any = None) -> dict[Any, list[Any]]:
+    grouped: dict[Any, list[Any]] = {}
+    for chunk in _chunks(list(keys)):
+        query = select(model).where(column.in_(chunk))
+        if order_by is not None:
+            query = query.order_by(*(order_by if isinstance(order_by, tuple) else (order_by,)))
+        rows: Sequence[Any] = db.scalars(query).all()
+        for row in rows:
+            grouped.setdefault(getattr(row, column.key), []).append(row)
+    return grouped
+
+
+def _rows_for_ids(db: Session, business_ids: Sequence[uuid.UUID]) -> list[Business]:
+    rows: list[Business] = []
+    for chunk in _chunks(list(dict.fromkeys(business_ids))):
+        rows.extend(db.scalars(select(Business).where(Business.id.in_(chunk))).all())
+    return rows
+
+
+_ANY = object()
+
+
+class _PeerIndex:
+    """Best peer rating / review count per (campaign, category, locality) bucket.
+
+    Reproduces the original pairwise rule - same campaign, category and locality equal
+    (case-insensitive) or missing on either side, excluding the business itself, ties
+    broken by list order - in O(n) instead of O(n^2).
+    """
+
+    def __init__(self, businesses: Sequence[Business], metrics: dict[uuid.UUID, dict[str, Any]]) -> None:
+        self.best: dict[tuple[str, Any, Any, Any], list[tuple[Any, int, Business]]] = {}
+        for index, business in enumerate(businesses):
+            values = metrics[business.id]
+            category = (business.category or "").casefold() or None
+            locality = (business.locality or "").casefold() or None
+            for metric, kind in (("rating", float), ("review_count", int)):
+                value = values[metric]
+                if not isinstance(value, kind):
+                    continue
+                for cat_key in (category, _ANY):
+                    for loc_key in (locality, _ANY):
+                        slot = self.best.setdefault((metric, business.campaign_id, cat_key, loc_key), [])
+                        slot.append((value, -index, business))
+                        slot.sort(key=lambda item: (item[0], item[1]), reverse=True)
+                        del slot[2:]
+
+    def peer_max(self, business: Business, metric: str) -> tuple[Any, Business | None]:
+        category = (business.category or "").casefold() or None
+        locality = (business.locality or "").casefold() or None
+        cat_keys = (category, None) if category else (_ANY,)
+        loc_keys = (locality, None) if locality else (_ANY,)
+        best: tuple[Any, int, Business] | None = None
+        for cat_key in cat_keys:
+            for loc_key in loc_keys:
+                for entry in self.best.get((metric, business.campaign_id, cat_key, loc_key), []):
+                    if entry[2].id == business.id:
+                        continue
+                    if best is None or (entry[0], entry[1]) > (best[0], best[1]):
+                        best = entry
+                    break
+        return (best[0], best[2]) if best else (None, None)
 
 
 def build_opportunity_cards(db: Session, limit: int = 20) -> list[dict[str, Any]]:
@@ -235,18 +392,27 @@ def build_opportunity_cards(db: Session, limit: int = 20) -> list[dict[str, Any]
 
     cards: list[dict[str, Any]] = []
     businesses = db.scalars(select(Business).order_by(Business.updated_at.desc(), Business.display_name)).all()
-    review_metrics = {business.id: _review_metrics(db, business.id) for business in businesses}
+    ids = [business.id for business in businesses]
+    review_metrics = _review_metrics_batch(db, ids)
+    peer_index = _PeerIndex(businesses, review_metrics)
+    scores = _latest_per_business(db, OpportunityScore, OpportunityScore.created_at, ids)
+    briefs = _latest_per_business(db, BusinessBrief, BusinessBrief.created_at, ids)
+    websites = _latest_per_business(db, Website, Website.checked_at, ids)
+    demos = _latest_per_business(db, GeneratedDemo, GeneratedDemo.created_at, ids)
+    proposals = _latest_per_business(db, ProposalPackage, ProposalPackage.created_at, ids)
+    deliveries = _latest_per_business(db, DeliveryProject, DeliveryProject.updated_at, ids)
+    suppressions = _latest_per_business(db, SuppressionEntry, SuppressionEntry.created_at, ids)
+    score_ids = [score.id for score in scores.values()]
+    components_by_score = _rows_for(
+        db,
+        OpportunityComponent,
+        OpportunityComponent.opportunity_score_id,
+        score_ids,
+        (OpportunityComponent.points.desc(), OpportunityComponent.code),
+    )
+    holds_by_score = _rows_for(db, OpportunityHold, OpportunityHold.opportunity_score_id, score_ids)
     for business in businesses:
         own_review = review_metrics[business.id]
-        peers = [
-            (peer, review_metrics[peer.id])
-            for peer in businesses
-            if peer.id != business.id
-            and peer.campaign_id == business.campaign_id
-            and (not business.category or not peer.category or peer.category.casefold() == business.category.casefold())
-            and (not business.locality or not peer.locality or peer.locality.casefold() == business.locality.casefold())
-            and (review_metrics[peer.id]["rating"] is not None or review_metrics[peer.id]["review_count"] is not None)
-        ]
         review_evidence: list[str] = []
         own_rating = own_review["rating"]
         own_count = own_review["review_count"]
@@ -254,83 +420,37 @@ def build_opportunity_cards(db: Session, limit: int = 20) -> list[dict[str, Any]
             review_evidence.append(f"Rating: {own_rating:.1f}")
         if isinstance(own_count, int) and own_count < 25:
             review_evidence.append(f"Reviews: {own_count}")
-        peer_rating = max(
-            (peer_metrics["rating"] for _peer, peer_metrics in peers if isinstance(peer_metrics["rating"], float)),
-            default=None,
-        )
+        peer_rating, rating_peer = peer_index.peer_max(business, "rating")
         if isinstance(own_rating, float) and isinstance(peer_rating, float) and peer_rating - own_rating >= 0.4:
-            peer = next(peer for peer, metrics in peers if metrics["rating"] == peer_rating)
+            assert rating_peer is not None
             review_evidence.append(
-                f"Peer comparison: {peer.display_name} shows {peer_rating:.1f} stars vs {own_rating:.1f}"
+                f"Peer comparison: {rating_peer.display_name} shows {peer_rating:.1f} stars vs {own_rating:.1f}"
             )
-        peer_count = max(
-            (
-                peer_metrics["review_count"]
-                for _peer, peer_metrics in peers
-                if isinstance(peer_metrics["review_count"], int)
-            ),
-            default=None,
-        )
+        peer_count, count_peer = peer_index.peer_max(business, "review_count")
         if (
             isinstance(own_count, int)
             and isinstance(peer_count, int)
             and peer_count >= own_count * 2
             and peer_count >= own_count + 20
         ):
-            peer = next(peer for peer, metrics in peers if metrics["review_count"] == peer_count)
-            review_evidence.append(f"Peer comparison: {peer.display_name} shows {peer_count} reviews vs {own_count}")
+            assert count_peer is not None
+            review_evidence.append(
+                f"Peer comparison: {count_peer.display_name} shows {peer_count} reviews vs {own_count}"
+            )
         review_gap = bool(review_evidence) and (
             (isinstance(own_rating, float) and own_rating < 4.0)
             or (isinstance(own_count, int) and own_count < 25)
             or any("Peer comparison" in item for item in review_evidence)
         )
-        score = db.scalar(
-            select(OpportunityScore)
-            .where(OpportunityScore.business_id == business.id)
-            .order_by(OpportunityScore.created_at.desc())
-        )
-        brief = db.scalar(
-            select(BusinessBrief)
-            .where(BusinessBrief.business_id == business.id)
-            .order_by(BusinessBrief.created_at.desc())
-        )
-        website = db.scalar(
-            select(Website).where(Website.business_id == business.id).order_by(Website.checked_at.desc())
-        )
-        demo = db.scalar(
-            select(GeneratedDemo)
-            .where(GeneratedDemo.business_id == business.id)
-            .order_by(GeneratedDemo.created_at.desc())
-        )
-        proposal = db.scalar(
-            select(ProposalPackage)
-            .where(ProposalPackage.business_id == business.id)
-            .order_by(ProposalPackage.created_at.desc())
-        )
-        delivery = db.scalar(
-            select(DeliveryProject)
-            .where(DeliveryProject.business_id == business.id)
-            .order_by(DeliveryProject.updated_at.desc())
-        )
-        suppression = db.scalar(
-            select(SuppressionEntry)
-            .where(SuppressionEntry.business_id == business.id)
-            .order_by(SuppressionEntry.created_at.desc())
-        )
-        components = (
-            db.scalars(
-                select(OpportunityComponent)
-                .where(OpportunityComponent.opportunity_score_id == score.id)
-                .order_by(OpportunityComponent.points.desc())
-            ).all()
-            if score
-            else []
-        )
-        holds = (
-            db.scalars(select(OpportunityHold).where(OpportunityHold.opportunity_score_id == score.id)).all()
-            if score
-            else []
-        )
+        score = scores.get(business.id)
+        brief = briefs.get(business.id)
+        website = websites.get(business.id)
+        demo = demos.get(business.id)
+        proposal = proposals.get(business.id)
+        delivery = deliveries.get(business.id)
+        suppression = suppressions.get(business.id)
+        components = components_by_score.get(score.id, []) if score else []
+        holds = holds_by_score.get(score.id, []) if score else []
         reasons: list[str] = []
         if review_gap:
             reasons.extend(review_evidence)
@@ -473,7 +593,6 @@ def map_panel(campaign: Any, businesses: Sequence[Business], db: Session | None 
     """Render a real Google Maps view with a safe local lead fallback."""
     geography = esc(getattr(campaign, "geography", None) or "Campaign area")
     query = (getattr(campaign, "geography", None) or "") + " " + (getattr(campaign, "vertical", None) or "")
-    maps_query = __import__("urllib.parse", fromlist=["quote_plus"]).quote_plus(query)
     maps_url = "https://www.google.com/maps/search/?api=1&query=" + __import__(
         "urllib.parse", fromlist=["quote_plus"]
     ).quote_plus(query)
@@ -525,8 +644,9 @@ def map_panel(campaign: Any, businesses: Sequence[Business], db: Session | None 
                 "<div class='map-data-note'>LBOE markers appear when business coordinates are available.</div>"
             )
     return (
-        f"<div class='map-caption' style='display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 8px;padding:0 2px'><strong>Geographic view</strong><span class='muted'>Campaign area · {geography}</span></div><div class='map-shell'><iframe class='map-iframe' src='https://www.google.com/maps?q={maps_query}&output=embed' loading='lazy' referrerpolicy='no-referrer-when-downgrade' title='Google Maps view of {geography}'></iframe>"
-        f"<div class='map-overlay'>{marker_html}<div class='map-context' style='position:absolute;left:50%;top:50%;z-index:2;display:grid;gap:4px;transform:translate(-50%,-50%);padding:15px 18px;border-radius:12px;background:rgba(20,33,61,.86);color:#fff;text-align:center;max-width:270px'><strong>Map view</strong><span style='font-size:.75rem;color:#dce4f2'>Google Maps area with LBOE lead markers where coordinates are available.</span></div><a class='button button-secondary map-open' href='{maps_url}' target='_blank' rel='noreferrer'>Open full map</a></div></div>"
+        f"<div class='map-caption'><strong>Geographic view</strong><span class='muted'>Campaign area · {geography}</span></div>"
+        f"<div class='map-shell map-local'><div class='map-overlay'>{marker_html}"
+        f"<a class='button button-secondary map-open' href='{maps_url}' target='_blank' rel='noopener noreferrer'>Open Google Maps (opens Google)</a></div></div>"
         f"<div class='map-leads'><div class='section-head'><div><h3>Leads in this area</h3><p class='muted'>Select a lead to see evidence and the next action.</p></div><span class='badge'>{len(businesses)} businesses</span></div><div class='map-lead-list'>{lead_links}</div></div>"
     )
 
@@ -536,7 +656,7 @@ def next_action_panel(report: dict[str, Any]) -> str:
     if counts.get("REVIEW_PENDING", 0):
         title, copy, href, label = (
             "Review demos",
-            "Approved concepts are waiting for a human decision.",
+            "Concept previews have passed QA and are waiting for your review decision.",
             "/ui/queues",
             "Open review queue",
         )
@@ -575,15 +695,14 @@ def next_action_panel(report: dict[str, Any]) -> str:
 def dashboard(db: Session = Depends(session)) -> HTMLResponse:
     report = build_pilot_report(db)
     quality = {item["code"]: item["count"] for item in report["quality_metrics"]}
+    lead_counts: dict[uuid.UUID, int] = {
+        campaign_id: int(count)
+        for campaign_id, count in db.execute(
+            select(Business.campaign_id, func.count()).group_by(Business.campaign_id)
+        ).all()
+    }
     campaigns = db.scalars(select(Campaign).order_by(Campaign.created_at.desc())).all()
-    campaign = max(
-        campaigns,
-        key=lambda item: (
-            len(db.scalars(select(Business).where(Business.campaign_id == item.id)).all()),
-            item.created_at,
-        ),
-        default=None,
-    )
+    campaign = max(campaigns, key=lambda item: (lead_counts.get(item.id, 0), item.created_at), default=None)
     campaign_businesses = (
         db.scalars(select(Business).where(Business.campaign_id == campaign.id).order_by(Business.display_name)).all()
         if campaign
@@ -617,30 +736,23 @@ def opportunities(db: Session = Depends(session)) -> HTMLResponse:
 @router.get("/ui/campaigns", response_class=HTMLResponse)
 def campaigns(db: Session = Depends(session)) -> HTMLResponse:
     rows = []
-    seen: set[tuple[str, str, str | None]] = set()
-    for campaign in db.scalars(
-        select(__import__("lboe_api.db", fromlist=["Campaign"]).Campaign).order_by(
-            __import__("lboe_api.db", fromlist=["Campaign"]).Campaign.created_at.desc()
-        )
-    ).all():
-        key = (campaign.name, campaign.vertical, campaign.geography)
-        if key in seen:
-            continue
-        seen.add(key)
-        count = (
-            db.scalar(select(Business).where(Business.campaign_id == campaign.id).count())
-            if False
-            else len(db.scalars(select(Business).where(Business.campaign_id == campaign.id)).all())
-        )
+    lead_counts: dict[uuid.UUID, int] = {
+        campaign_id: int(count)
+        for campaign_id, count in db.execute(
+            select(Business.campaign_id, func.count()).group_by(Business.campaign_id)
+        ).all()
+    }
+    for campaign in db.scalars(select(Campaign).order_by(Campaign.created_at.desc())).all():
+        count = lead_counts.get(campaign.id, 0)
         rows.append(
             f"<tr><td><a class='table-primary' href='/ui/campaigns/{campaign.id}'>{esc(campaign.name)}</a><small class='table-sub'>Latest run · {esc(campaign.created_at)}</small></td><td>{esc(campaign.vertical)}</td><td>{esc(campaign.geography)}</td><td><strong>{count}</strong></td><td><a class='button button-small button-secondary' href='/ui/campaigns/{campaign.id}'>Open workspace</a></td></tr>"
         )
     table = (
-        "<table><tr><th>Campaign</th><th>Vertical</th><th>Geography</th><th>Leads</th><th></th></tr>"
+        "<table><tr><th>Campaign</th><th>Vertical</th><th>Geography</th><th>Leads</th><th><span class='visually-hidden'>Actions</span></th></tr>"
         + "".join(rows)
         + "</table>"
     )
-    form = "<section class='section create-panel'><div><span class='eyebrow'>New workspace</span><h2>Start a campaign</h2><p class='muted'>Choose the market you want to work. You can add discovery results after the campaign is created.</p></div><form method='post' action='/ui/campaigns'><input name='name' placeholder='Campaign name' required><input name='vertical' placeholder='Vertical' required><input name='geography' placeholder='Geography'><button class='button-primary'>Create campaign</button></form></section>"
+    form = "<section class='section create-panel'><div><span class='eyebrow'>New workspace</span><h2>Start a campaign</h2><p class='muted'>Choose the market you want to work. You can add discovery results after the campaign is created.</p></div><form method='post' action='/ui/campaigns'><label class='field'><span>Campaign name</span><input name='name' required></label><label class='field'><span>Vertical</span><input name='vertical' required placeholder='e.g. hair salons'></label><label class='field'><span>Geography</span><input name='geography' placeholder='e.g. Cape Town'></label><button class='button-primary'>Create campaign</button></form></section>"
     return page(
         "Campaigns",
         "<div class='page-intro'><div><span class='eyebrow'>Workspaces</span><h1>Campaigns</h1><p class='muted'>One workspace per market. Open a campaign to see its map and lead queue.</p></div></div>"
@@ -691,6 +803,8 @@ async def discover_from_ui(
     )
     try:
         result = await discover_campaign(campaign_id, body, db)
+        if result.get("status") == "queued" and result.get("job_id"):
+            return RedirectResponse(f"/ui/jobs/{result['job_id']}", status_code=303)
         status = result.get("status", "completed")
     except HTTPException as exc:
         detail = exc.detail
@@ -713,6 +827,7 @@ def campaign_detail(
     website_status: str | None = None,
     q: str | None = None,
     discovery_status: str | None = None,
+    page_number: int = Query(1, alias="page", ge=1),
     db: Session = Depends(session),
 ) -> HTMLResponse:
     from lboe_api.db import Campaign
@@ -723,20 +838,22 @@ def campaign_detail(
     businesses = db.scalars(
         select(Business).where(Business.campaign_id == campaign_id).order_by(Business.display_name)
     ).all()
-    rows = []
+    ids = [business.id for business in businesses]
+    scores = _latest_per_business(db, OpportunityScore, OpportunityScore.created_at, ids)
+    briefs = _latest_per_business(db, BusinessBrief, BusinessBrief.created_at, ids)
+    demos = _latest_per_business(db, GeneratedDemo, GeneratedDemo.created_at, ids)
+    with_website = {
+        row
+        for chunk in _chunks(ids)
+        for row in db.scalars(
+            select(Contact.business_id).where(Contact.business_id.in_(chunk), Contact.channel == "website")
+        ).all()
+    }
     visible_businesses: list[Business] = []
     for business in businesses:
-        score = db.scalar(
-            select(OpportunityScore)
-            .where(OpportunityScore.business_id == business.id)
-            .order_by(OpportunityScore.created_at.desc())
-        )
-        brief = db.scalar(
-            select(BusinessBrief)
-            .where(BusinessBrief.business_id == business.id)
-            .order_by(BusinessBrief.created_at.desc())
-        )
-        website = db.scalar(select(Contact).where(Contact.business_id == business.id, Contact.channel == "website"))
+        score = scores.get(business.id)
+        brief = briefs.get(business.id)
+        has_website = business.id in with_website
         if (
             state
             and business.state != state
@@ -747,21 +864,47 @@ def campaign_detail(
             or band
             and (not score or score.band != band)
             or website_status == "no_website"
-            and website is not None
+            and has_website
             or website_status == "website_present"
-            and website is None
+            and not has_website
         ):
             continue
         visible_businesses.append(business)
-        demo = db.scalar(
-            select(GeneratedDemo)
-            .where(GeneratedDemo.business_id == business.id)
-            .order_by(GeneratedDemo.created_at.desc())
-        )
-        website_label = "No website" if website is None else "Website present"
+    page_count = max(1, -(-len(visible_businesses) // LEADS_PER_PAGE))
+    current_page = min(max(1, page_number), page_count)
+    shown = visible_businesses[(current_page - 1) * LEADS_PER_PAGE : current_page * LEADS_PER_PAGE]
+    rows = []
+    for business in shown:
+        score = scores.get(business.id)
+        brief = briefs.get(business.id)
+        demo = demos.get(business.id)
+        website_label = "Website present" if business.id in with_website else "No website"
         rows.append(
             f"<tr><td><a class='table-primary' href='/ui/businesses/{business.id}'>{esc(business.display_name)}</a><small class='table-sub'>{esc(website_label)}</small></td><td>{esc(business.category)}</td><td>{esc(business.locality)}</td><td><span class='badge'>{esc(business.state)}</span></td><td>{score.score if score else '—'}</td><td>{esc(score.band if score else '')}</td><td>{esc(brief.recommended_next_action if brief else '')}</td><td>{esc(demo.status if demo else '')}</td></tr>"
         )
+    query_args = {
+        key: value
+        for key, value in {
+            "state": state,
+            "action": action,
+            "band": band,
+            "website_status": website_status,
+            "q": q,
+        }.items()
+        if value
+    }
+
+    def page_link(target: int, label: str) -> str:
+        href = f"/ui/campaigns/{campaign_id}?" + urlencode({**query_args, "page": target})
+        return f"<a class='button button-secondary button-small' href='{esc(href)}'>{label}</a>"
+
+    pager = (
+        "<nav class='pager' aria-label='Lead list pages'>"
+        + (page_link(current_page - 1, "Previous") if current_page > 1 else "")
+        + f"<span>Page {current_page} of {page_count} · {len(visible_businesses)} matching leads</span>"
+        + (page_link(current_page + 1, "Next") if current_page < page_count else "")
+        + "</nav>"
+    )
     filters = f"<form class='lead-filters' method='get'><input name='q' value='{esc(q)}' placeholder='Search business'><select name='website_status'><option value=''>All website statuses</option><option value='no_website' {'selected' if website_status == 'no_website' else ''}>No website</option><option value='website_present' {'selected' if website_status == 'website_present' else ''}>Website present</option></select><input name='state' value='{esc(state)}' placeholder='State'><input name='action' value='{esc(action)}' placeholder='Recommended action'><input name='band' value='{esc(band)}' placeholder='Score band'><button>Filter leads</button></form>"
     table = (
         "<table><tr><th>Business</th><th>Category</th><th>Locality</th><th>State</th><th>Score</th><th>Band</th><th>Action</th><th>Demo</th></tr>"
@@ -778,23 +921,30 @@ def campaign_detail(
         "<section class='section discovery-panel'><div><span class='eyebrow'>Find businesses</span><h2>Run discovery in this campaign</h2><p class='muted'>Search Google Maps for a vertical and location. Coordinates are required by the maps provider and keep the search predictable.</p></div>"
         "<form method='post' action='/ui/campaigns/"
         + str(campaign_id)
-        + "/discover'><input name='queries' placeholder='Queries, e.g. hair salons' required><input name='geography' value='"
+        + "/discover'><label class='field'><span>Search queries (comma separated)</span><input name='queries' placeholder='e.g. hair salons' required></label><label class='field'><span>Geography</span><input name='geography' value='"
         + esc(campaign.geography or "")
-        + "' placeholder='Geography'><div class='discovery-coordinates'><input name='latitude' type='number' step='any' placeholder='Latitude' required><input name='longitude' type='number' step='any' placeholder='Longitude' required><input name='max_results' type='number' min='1' max='100' value='25' aria-label='Maximum results'></div><button class='button-primary'>Find businesses</button></form></section>"
+        + "'></label><div class='discovery-coordinates'><label class='field'><span>Latitude</span><input name='latitude' type='number' step='any' required></label><label class='field'><span>Longitude</span><input name='longitude' type='number' step='any' required></label><label class='field'><span>Maximum results</span><input name='max_results' type='number' min='1' max='100' value='25'></label></div><button class='button-primary'>Find businesses</button></form></section>"
     )
     return page(
         f"Campaign · {campaign.name}",
         discovery_notice
         + intro
         + discovery_form
-        + map_panel(campaign, visible_businesses, db)
-        + f"<section class='section'><div class='section-head'><h2>Lead list</h2><span class='badge'>{len(rows)} shown</span></div>{filters}{table}</section>",
+        + map_panel(campaign, shown, db)
+        + f"<section class='section'><div class='section-head'><h2>Lead list</h2><span class='badge'>{len(rows)} shown</span></div>{filters}{table}{pager}</section>",
     )
+
+
+def _workflow_panel(request: Request, db: Session, business: Business, suppressed: bool) -> str:
+    from lboe_api.ui.workflow import workflow_panel  # workflow imports this module
+
+    return workflow_panel(request, db, business, suppressed)
 
 
 @router.get("/ui/businesses/{business_id}", response_class=HTMLResponse)
 def business_detail(
     business_id: uuid.UUID,
+    request: Request,
     action_completed: str | None = None,
     action_error: str | None = None,
     db: Session = Depends(session),
@@ -839,9 +989,15 @@ def business_detail(
         .where(OperatorAssignment.business_id == business_id)
         .order_by(OperatorAssignment.created_at.desc())
     ).all()
+    suppression_entry = db.scalar(
+        select(SuppressionEntry)
+        .where(SuppressionEntry.business_id == business_id)
+        .order_by(SuppressionEntry.created_at.desc())
+    )
+    suppressed = business.state == "SUPPRESSED" or suppression_entry is not None
     demo_html = (
         "".join(
-            f"<li><a href='/ui/demos/{demo.id}/preview'>Demo {demo.id}</a> — {esc(demo.status)} {('<strong>QA failed: inspect checks; regenerate or mark manual edit. Sharing blocked.</strong>' if demo.status == 'qa_failed' else '')} <a href='/ui/demos/{demo.id}/preview-links'>preview links</a></li>"
+            f"<li><a href='/ui/demos/{demo.id}/preview'>{esc(demo.demo_type.replace('_', ' ').capitalize())} concept · {esc(fmt_dt(demo.created_at))}</a> — {esc(status_label(demo.status))} {('<strong>Sharing blocked until QA passes: inspect checks, then regenerate or edit.</strong>' if demo.status == 'qa_failed' else '')} <a href='/ui/demos/{demo.id}/qa'>QA checks</a> · <a href='/ui/demos/{demo.id}/preview-links'>Share links</a></li>"
             for demo in demos
         )
         or "<li>None</li>"
@@ -855,15 +1011,32 @@ def business_detail(
     )
     event_html = (
         "".join(
-            f"<li>{esc(event.event_type)} · {esc(event.occurred_at)} · {esc(event.summary)}</li>" for event in events
+            f"<li>{esc(event.event_type.replace('_', ' ').capitalize())} · {esc(fmt_dt(event.occurred_at))} · {esc(event.summary)}</li>"
+            for event in events
         )
         or "<li>None</li>"
     )
     comment_html = (
-        "".join(f"<li>{esc(comment.body)} · {esc(comment.created_at)}</li>" for comment in comments) or "<li>None</li>"
+        "".join(f"<li>{esc(comment.body)} · {esc(fmt_dt(comment.created_at))}</li>" for comment in comments)
+        or "<li>None</li>"
     )
     operators = db.scalars(select(Operator).where(Operator.active.is_(True))).all()
     operator_options = "".join(f"<option value='{op.id}'>{esc(op.display_name)}</option>" for op in operators)
+    assignment_names = (
+        {
+            op.id: op.display_name
+            for op in db.scalars(select(Operator).where(Operator.id.in_([a.operator_id for a in assignments]))).all()
+        }
+        if assignments
+        else {}
+    )
+    assignment_rows = (
+        "".join(
+            f"<li>{esc(assignment_names.get(item.operator_id, 'Unknown operator'))} · {esc(item.status)}</li>"
+            for item in assignments
+        )
+        or "<li>None</li>"
+    )
     pilot = pilot_for_business(db, business.id)
     score_components = (
         db.scalars(select(OpportunityComponent).where(OpportunityComponent.opportunity_score_id == score.id)).all()
@@ -948,9 +1121,14 @@ def business_detail(
         )
         or "<li><strong>No score components yet</strong><small>Run scoring to see the evidence behind the recommendation.</small></li>"
     )
+    hold_reasons = [h.reason for h in score_holds]
+    if suppressed and not any(h.code == "SUPPRESSED" for h in score_holds):
+        hold_reasons.insert(
+            0, f"Suppressed: {suppression_entry.reason if suppression_entry else 'operator suppression'}"
+        )
     hold_notice = (
-        "<div class='warning'><strong>Hold:</strong> " + "; ".join(esc(h.reason) for h in score_holds) + "</div>"
-        if score_holds
+        "<div class='warning'><strong>Hold:</strong> " + "; ".join(esc(reason) for reason in hold_reasons) + "</div>"
+        if hold_reasons
         else "<p class='success'>No identity, suppression, or policy holds are blocking this lead.</p>"
     )
     observability = (
@@ -962,12 +1140,17 @@ def business_detail(
     )
     pilot_banner = ""
     if pilot is not None:
-        pilot_banner = f"<div class='safety'>{'DRY RUN MODE — manual outreach and CRM outcome logging are blocked by the operator console.' if pilot.mode == 'dry_run' else 'ACTIVE PILOT MODE — manual records represent operator activity; LBOE still sends nothing.'} <a href='/ui/pilots/{pilot.id}'>View pilot</a></div>"
+        pilot_banner = f"<div class='notice'>{'DRY RUN pilot — this is a rehearsal. Do not contact businesses or record real outreach for it.' if pilot.mode == 'dry_run' else 'ACTIVE pilot — manual records represent real operator activity; LBOE still sends nothing.'} <a href='/ui/pilots/{pilot.id}'>View pilot</a></div>"
     next_action_button = ""
+    if suppressed:
+        action_title = "Suppressed — do not contact"
+        action_reason = "No pipeline actions are available for a suppressed business."
     # A demo is generated from a persisted Business Brief. Keep the UI honest
     # about that prerequisite instead of showing a demo action that can only
     # return ``brief_required`` from the API.
-    if raw_action == "audit_required" and latest_audit is None:
+    if suppressed:
+        pass
+    elif raw_action == "audit_required" and latest_audit is None:
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='audit'><button class='button-primary'>Run website audit</button></form>"
     elif evidence_needs_refresh:
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='refresh_evidence'><button class='button-primary'>Refresh score and brief</button></form>"
@@ -987,24 +1170,40 @@ def business_detail(
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='score'><button class='button-primary'>Score this lead</button></form>"
     elif any(demo.status == "approved" for demo in demos) and not proposals:
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='proposal'><button class='button-primary'>Create proposal pack</button></form>"
+    suppression_banner = (
+        f"<div class='alert-danger' role='alert'><strong>Suppressed — do not contact.</strong> "
+        f"Reason: {esc(suppression_entry.reason if suppression_entry else 'operator suppression')}"
+        f"{' · recorded ' + esc(fmt_dt(suppression_entry.created_at)) if suppression_entry else ''}. "
+        "Scoring, demos, drafts and contact logging are disabled for this business.</div>"
+        if suppressed
+        else ""
+    )
+    safety_section = (
+        f"<section class='section'><h2>Safety</h2><p>Suppressed{' on ' + esc(fmt_dt(suppression_entry.created_at)) if suppression_entry else ''}. "
+        "Suppression is permanent in LBOE; the business will not be offered for outreach again.</p></section>"
+        if suppressed
+        else f"<section class='section'><h2>Safety</h2><p class='muted'>Suppressing a business permanently blocks outreach actions, withdraws shared previews, and is recorded for auditability.</p><form method='post' action='/ui/businesses/{business_id}/suppress' onsubmit=\"return confirm('Suppress this business permanently and withdraw every active preview link?')\"><label class='field'><span>Reason for suppression</span><input name='reason' required></label><button>Suppress business</button></form></section>"
+    )
     body = (
-        pilot_banner
+        suppression_banner
+        + pilot_banner
         + (
             f"<div class='success'>Action completed: {esc(action_completed.replace('_', ' '))}.</div>"
             if action_completed
             else ""
         )
         + (f"<div class='warning'>Action could not be completed: {esc(action_error)}</div>" if action_error else "")
-        + f"<div class='page-intro'><div><div class='eyebrow'>Business workspace</div><h1>{esc(business.display_name)}</h1><p class='muted'>{esc(business.category or 'Local business')} · {esc(business.locality or 'Location not verified')}</p></div><span class='badge'>{esc(business.state.replace('_', ' ').title())}</span></div>"
+        + f"<div class='page-intro'><div><div class='eyebrow'>Business workspace</div><h1>{esc(business.display_name)}</h1><p class='muted'>{esc(business.category or 'Local business')} · {esc(business.locality or 'Location not verified')}</p></div><span class='badge'>{esc(state_label(business.state))}</span></div>"
         + f"<section class='next-action'><div><div class='eyebrow'>Recommended next step</div><h2>{esc(action_title)}</h2><p>{esc(action_reason)}</p></div>{next_action_button}</section>"
         + f"<div class='cards'><div class='card'><span>Opportunity score</span><b>{score_value}</b><small>{esc(band)} · {esc(score_explanation)}</small></div><div class='card'><span>Evidence status</span><b>{'Ready' if score and brief else 'In progress'}</b><small>{'Score and brief available' if score and brief else 'More evidence may be needed'}</small></div><div class='card'><span>Outreach</span><b>{'Drafted' if package else 'Not started'}</b><small>{'No messages are sent by LBOE'}</small></div></div>"
-        + f"<section class='section'><div class='section-head'><h2>What we know</h2><span class='badge'>Verified identity</span></div><p><strong>{esc(business.display_name)}</strong> is listed as a <strong>{esc(business.category or 'local business')}</strong> in <strong>{esc(business.locality or 'an unverified location')}</strong>.</p><p class='muted'>{esc(business.address_text or 'A full address has not been verified yet.')}</p><p class='muted'>This page summarizes evidence collected by LBOE. It does not claim the business is poorly run.</p></section>"
+        + f"<section class='section'><div class='section-head'><h2>What we know</h2><span class='badge'>From listing data — verify before use</span></div><p><strong>{esc(business.display_name)}</strong> is listed as a <strong>{esc(business.category or 'local business')}</strong> in <strong>{esc(business.locality or 'an unverified location')}</strong>.</p><p class='muted'>{esc(business.address_text or 'A full address has not been verified yet.')}</p><p class='muted'>This page summarizes evidence collected by LBOE. It does not claim the business is poorly run.</p></section>"
         + f"<section class='section'><h2>Why this recommendation?</h2><p>{esc(brief.summary if brief else action_reason)}</p>{observability}</section>"
         + f"<section class='section'><h2>Evidence progress</h2><div class='stat-line'><span>Website / audit</span><strong>{'Audited' if latest_audit else 'Not audited'}</strong></div><div class='stat-line'><span>Business brief</span><strong>{'Prepared' if brief else 'Not prepared'}</strong></div><div class='stat-line'><span>Optional enrichment</span><strong>{'Available' if enrichment_runs else 'Not run'}</strong></div><p class='muted'>Enrichment is optional. “Not run” is not an error; the current recommendation can still be based on discovery and audit evidence.</p></section>"
         + f"<section class='section'><h2>Demo and proposal path</h2><p>{esc(package.status.replace('_', ' ').title()) if package else 'No outreach draft has been prepared.'}</p><ul>{demo_html}</ul><h3>Proposal packs</h3><ul>{proposal_html}</ul><p class='muted'>For a no-website lead, generate a concept preview first. After human approval, create a proposal pack for operator review. LBOE does not send messages automatically.</p></section>"
-        + f"<section class='section'><h2>Activity</h2><h3>CRM events</h3><ul>{event_html}</ul><h3>Assignments</h3><ul>{''.join(f'<li>{esc(str(a.operator_id))} · {esc(a.status)}</li>' for a in assignments) or '<li>None</li>'}</ul><form method='post' action='/ui/businesses/{business_id}/assign'><select name='operator_id'>{operator_options}</select><button>Assign</button></form></section>"
-        + f"<section class='section'><h2>Operator notes</h2><ul>{comment_html}</ul><form method='post' action='/ui/businesses/{business_id}/comment'><textarea name='body' required placeholder='Add context for the next operator'></textarea><button>Add note</button></form></section>"
-        + f"<section class='section'><h2>Safety</h2><p class='muted'>Suppressing a business prevents future outreach actions and is recorded for auditability.</p><form method='post' action='/ui/businesses/{business_id}/suppress'><input name='reason' required placeholder='Suppression reason'><button>Suppress business</button></form></section>"
+        + _workflow_panel(request, db, business, suppressed)
+        + f"<section class='section'><h2>Activity</h2><h3>CRM events</h3><ul>{event_html}</ul><h3>Assignments</h3><ul>{assignment_rows}</ul><form method='post' action='/ui/businesses/{business_id}/assign'><label class='field'><span>Assign to</span><select name='operator_id'>{operator_options}</select></label><button>Assign</button></form></section>"
+        + f"<section class='section'><h2>Operator notes</h2><ul>{comment_html}</ul><form method='post' action='/ui/businesses/{business_id}/comment'><label class='field'><span>Add a note for the next operator</span><textarea name='body' required></textarea></label><button>Add note</button></form></section>"
+        + safety_section
     )
     return page(business.display_name, body)
 
@@ -1028,25 +1227,28 @@ async def business_action(
 
     if db.get(Business, business_id) is None:
         raise HTTPException(404, "business_not_found")
+    queued_job_id: str | None = None
     try:
         if action == "score":
             await score_business(business_id, ScoreRequestBody(idempotency_key="ui"), db)
         elif action == "audit":
-            await audit_business(
+            result = await audit_business(
                 business_id,
                 AuditRequestBody(timeout_seconds=30, max_pages=2, idempotency_key="ui"),
                 db,
             )
+            queued_job_id = result.get("job_id") if result.get("status") == "queued" else None
         elif action == "refresh_evidence":
             refresh_key = f"ui-refresh-{uuid.uuid4()}"
             await score_business(business_id, ScoreRequestBody(idempotency_key=refresh_key), db)
             await create_brief(business_id, {"idempotency_key": refresh_key}, db)
         elif action == "enrich":
-            await enrich_business(
+            result = await enrich_business(
                 business_id,
                 EnrichmentRequestBody(idempotency_key=f"ui-enrich-{uuid.uuid4()}"),
                 db,
             )
+            queued_job_id = result.get("job_id") if result.get("status") == "queued" else None
         elif action == "brief":
             await create_brief(business_id, {"idempotency_key": "ui"}, db)
         elif action == "generate_demo":
@@ -1064,7 +1266,35 @@ async def business_action(
     except HTTPException as exc:
         detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
         return RedirectResponse(f"/ui/businesses/{business_id}?action_error={quote_plus(detail)}", status_code=303)
+    if queued_job_id:
+        return RedirectResponse(f"/ui/jobs/{queued_job_id}", status_code=303)
     return RedirectResponse(f"/ui/businesses/{business_id}?action_completed={quote_plus(action)}", status_code=303)
+
+
+@router.get("/ui/jobs/{job_id}", response_class=HTMLResponse)
+def job_status_page(job_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(404, "job_not_found")
+    active = job.status in {"queued", "running"}
+    refresh = "<meta http-equiv='refresh' content='3'>" if active else ""
+    progress = (
+        "Queued for a worker. This page will refresh automatically."
+        if job.status == "queued"
+        else ("Worker is processing this task. This page will refresh automatically." if active else "")
+    )
+    result = html.escape(str(job.payload.get("result") or ""))
+    error = html.escape(str(job.payload.get("error") or ""))
+    result_html = f"<p>Completed result: {result}</p>" if result else ""
+    error_html = f"<p class='warning' role='alert'>Task failed ({error}).</p>" if error else ""
+    body = (
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        f"{refresh}<title>Job status · LBOE</title><link rel='stylesheet' href='/ui/static/ui.css'></head><body><main>"
+        f"<h1>{html.escape(job.job_type.replace('_', ' ').title())}</h1><p>Status: <strong>{html.escape(job.status)}</strong></p>"
+        f"<p role='status'>{progress}</p>{result_html}{error_html}"
+        "<p><a href='/ui'>Return to dashboard</a></p></main></body></html>"
+    )
+    return HTMLResponse(body)
 
 
 @router.get("/ui/businesses/{business_id}/outreach-workbench", response_class=HTMLResponse)
@@ -1100,13 +1330,13 @@ def outreach_workbench(business_id: uuid.UUID, db: Session = Depends(session)) -
         or "<p>No draft package.</p>"
     )
     followup_html = (
-        "".join(f"<li>{esc(item.due_at)} · {esc(item.reason)} · {esc(item.status)}</li>" for item in followups)
+        "".join(f"<li>{esc(fmt_dt(item.due_at))} · {esc(item.reason)} · {esc(item.status)}</li>" for item in followups)
         or "<li>None</li>"
     )
     objection_html = "".join(f"<li>{esc(item.code)} · {esc(item.notes)}</li>" for item in objections) or "<li>None</li>"
     return page(
         "Manual outreach workbench",
-        f"<div class='safety'>COPY ONLY — LBOE never sends messages. Perform any contact outside LBOE and record it manually.</div><p>{esc(business.display_name)} · state {esc(business.state)}</p><h2>Drafts</h2>{drafts}<h2>Follow-up list</h2><ul>{followup_html}</ul><h2>Objections</h2><ul>{objection_html}</ul><p>Use the API to add follow-up tasks and operator-entered objection or reply classifications.</p>",
+        f"<div class='safety'>COPY ONLY — LBOE never sends messages. Perform any contact outside LBOE and record it manually.</div><p>{esc(business.display_name)} · state {esc(business.state)}</p><h2>Drafts</h2>{drafts}<h2>Follow-up list</h2><ul>{followup_html}</ul><h2>Objections</h2><ul>{objection_html}</ul><p><a href='/ui/businesses/{business.id}#workflow'>Record an outcome or schedule a follow-up</a> on the business page.</p>",
     )
 
 
@@ -1115,9 +1345,10 @@ def follow_up_queue(db: Session = Depends(session)) -> HTMLResponse:
     tasks = db.scalars(
         select(ManualFollowUpTask).where(ManualFollowUpTask.status == "open").order_by(ManualFollowUpTask.due_at)
     ).all()
+    owners = {row.id: row for row in _rows_for_ids(db, [item.business_id for item in tasks])}
     rows = (
         "".join(
-            f"<tr><td><a href='/ui/businesses/{item.business_id}/outreach-workbench'>{item.business_id}</a></td><td>{esc(item.due_at)}</td><td>{esc(item.reason)}</td></tr>"
+            f"<tr><td><a href='/ui/businesses/{item.business_id}/outreach-workbench'>{esc(owners[item.business_id].display_name if item.business_id in owners else 'Unknown business')}</a></td><td>{esc(fmt_dt(item.due_at))}</td><td>{esc(item.reason)}</td></tr>"
             for item in tasks
         )
         or "<tr><td colspan='3'>No open follow-ups</td></tr>"
@@ -1151,6 +1382,8 @@ def assign_business(
 
 @router.post("/ui/businesses/{business_id}/comment")
 def add_comment(business_id: uuid.UUID, body: str = Form(...), db: Session = Depends(session)) -> RedirectResponse:
+    if db.get(Business, business_id) is None:
+        raise HTTPException(404, "business_not_found")
     operator = db.scalar(select(Operator).where(Operator.active.is_(True)).order_by(Operator.created_at))
     if operator is None:
         operator = Operator(display_name="local-operator", role="owner")
@@ -1176,9 +1409,20 @@ def suppress(business_id: uuid.UUID, reason: str = Form(...), db: Session = Depe
     business = db.get(Business, business_id)
     if business is None:
         raise HTTPException(404, "business_not_found")
+    previous_state = business.state
     if business.state != "SUPPRESSED":
         business.state = "SUPPRESSED"
+        db.add(
+            PipelineEvent(
+                business_id=business_id,
+                from_state=previous_state,
+                to_state="SUPPRESSED",
+                actor="operator",
+                reason=reason,
+            )
+        )
     db.add(SuppressionEntry(business_id=business_id, reason=reason))
+    revoke_share_links(db, business_id)
     db.add(
         OperatorAuditEvent(
             business_id=business_id,
@@ -1190,6 +1434,16 @@ def suppress(business_id: uuid.UUID, reason: str = Form(...), db: Session = Depe
     )
     db.commit()
     return RedirectResponse(f"/ui/businesses/{business_id}", status_code=303)
+
+
+def revoke_share_links(db: Session, business_id: uuid.UUID) -> int:
+    links = db.scalars(
+        select(DemoPreviewLink).where(DemoPreviewLink.business_id == business_id, DemoPreviewLink.status == "active")
+    ).all()
+    for link in links:
+        link.status = "revoked"
+        link.revoked_at = datetime.now(UTC)
+    return len(links)
 
 
 @router.get("/ui/reports/pilot", response_class=HTMLResponse)
@@ -1217,7 +1471,7 @@ def campaign_report(campaign_id: uuid.UUID, db: Session = Depends(session)) -> H
 
 @router.get("/ui/queues", response_class=HTMLResponse)
 def queues(db: Session = Depends(session)) -> HTMLResponse:
-    links = [
+    links: list[tuple[str, str, Select[Any]]] = [
         (
             "demo-review",
             "Demo review",
@@ -1243,7 +1497,7 @@ def queues(db: Session = Depends(session)) -> HTMLResponse:
     body = (
         "<div class='queue-grid'>"
         + "".join(
-            f"<a class='card' href='/ui/queues/{slug}'><b>{label}</b><span>{len(db.scalars(query).all())} items</span></a>"  # type: ignore[call-overload]
+            f"<a class='card' href='/ui/queues/{slug}'><b>{label}</b><span>{db.scalar(select(func.count()).select_from(query.subquery()))} items</span></a>"
             for slug, label, query in links
         )
         + "</div>"
@@ -1267,7 +1521,7 @@ def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLRespons
         return proposal_ready_queue(db)
     if queue_name == "delivery":
         return delivery_queue(db)
-    mapping = {
+    mapping: dict[str, tuple[str, Any]] = {
         "demo-review": (
             "Demo review",
             select(GeneratedDemo).where(GeneratedDemo.status.in_(["qa_passed", "review_pending"])),
@@ -1290,13 +1544,14 @@ def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLRespons
     if queue_name not in mapping:
         raise HTTPException(404, "queue_not_found")
     title, query = mapping[queue_name]
-    items = db.scalars(query).all()  # type: ignore[call-overload]
+    items: Sequence[Any] = db.scalars(query).all()
+    # Some queues query the business directly; others query a related
+    # record (demo, draft, or readiness package) with business_id.
+    business_ids: list[uuid.UUID] = [getattr(item, "business_id", None) or item.id for item in items]
+    names = {row.id: row for row in _rows_for_ids(db, business_ids)}
     rows = []
-    for item in items:
-        # Some queues query the business directly; others query a related
-        # record (demo, draft, or readiness package) with business_id.
-        business_id = getattr(item, "business_id", item.id)
-        business = db.get(Business, business_id)
+    for business_id in business_ids:
+        business = names.get(business_id)
         rows.append(
             f"<li><a href='/ui/businesses/{business_id}'>{esc(business.display_name if business else business_id)}</a></li>"
         )
@@ -1331,27 +1586,22 @@ def no_website_queue(db: Session) -> HTMLResponse:
     ).all()
     rows: list[str] = []
     seen: set[tuple[str, str | None]] = set()
+    ids = [business.id for business in businesses]
+    scores = _latest_per_business(db, OpportunityScore, OpportunityScore.created_at, ids)
+    briefs = _latest_per_business(db, BusinessBrief, BusinessBrief.created_at, ids)
     for business in businesses:
         key = (business.display_name.strip().lower(), (business.locality or "").strip().lower())
         if key in seen:
             continue
         seen.add(key)
-        score = db.scalar(
-            select(OpportunityScore)
-            .where(OpportunityScore.business_id == business.id)
-            .order_by(OpportunityScore.created_at.desc())
-        )
-        brief = db.scalar(
-            select(BusinessBrief)
-            .where(BusinessBrief.business_id == business.id)
-            .order_by(BusinessBrief.created_at.desc())
-        )
+        score = scores.get(business.id)
+        brief = briefs.get(business.id)
         action = brief.recommended_next_action.replace("_", " ") if brief else "score this lead"
         rows.append(
             f"<tr><td><a class='table-primary' href='/ui/businesses/{business.id}'>{esc(business.display_name)}</a><small class='table-sub'>{esc(business.locality or 'Location not verified')}</small></td><td><span class='badge'>{esc(business.state.replace('_', ' ').title())}</span></td><td>{score.score if score else '—'}</td><td>{esc(action)}</td><td><a class='button button-small button-secondary' href='/ui/businesses/{business.id}'>Review lead</a></td></tr>"
         )
     table = (
-        "<table><tr><th>Business</th><th>State</th><th>Score</th><th>Recommended next step</th><th></th></tr>"
+        "<table><tr><th>Business</th><th>State</th><th>Score</th><th>Recommended next step</th><th><span class='visually-hidden'>Actions</span></th></tr>"
         + ("".join(rows) or "<tr><td colspan='5'>No active businesses without a website were found.</td></tr>")
         + "</table>"
     )
@@ -1367,17 +1617,13 @@ def no_website_queue(db: Session) -> HTMLResponse:
 @router.get("/ui/queues/no-demo-reason", response_class=HTMLResponse)
 def no_demo_reason_queue(db: Session = Depends(session)) -> HTMLResponse:
     items = []
-    for business in db.scalars(select(Business)).all():
-        score = db.scalar(
-            select(OpportunityScore)
-            .where(OpportunityScore.business_id == business.id)
-            .order_by(OpportunityScore.created_at.desc())
-        )
-        demo = db.scalar(
-            select(GeneratedDemo)
-            .where(GeneratedDemo.business_id == business.id)
-            .order_by(GeneratedDemo.created_at.desc())
-        )
+    businesses = db.scalars(select(Business)).all()
+    ids = [business.id for business in businesses]
+    scores = _latest_per_business(db, OpportunityScore, OpportunityScore.created_at, ids)
+    demos = _latest_per_business(db, GeneratedDemo, GeneratedDemo.created_at, ids)
+    for business in businesses:
+        score = scores.get(business.id)
+        demo = demos.get(business.id)
         if score and demo is None:
             items.append((business, score.recommended_next_action, "audit, manual review, or score-only follow-up"))
     return _reason_queue("Why no demo", items)
@@ -1386,10 +1632,17 @@ def no_demo_reason_queue(db: Session = Depends(session)) -> HTMLResponse:
 @router.get("/ui/queues/qa-failed", response_class=HTMLResponse)
 def qa_failed_queue(db: Session = Depends(session)) -> HTMLResponse:
     items = []
-    for demo in db.scalars(select(GeneratedDemo).where(GeneratedDemo.status == "qa_failed")).all():
-        business = db.get(Business, demo.business_id)
+    failed_demos = db.scalars(select(GeneratedDemo).where(GeneratedDemo.status == "qa_failed")).all()
+    owners = {row.id: row for row in _rows_for_ids(db, [demo.business_id for demo in failed_demos])}
+    qa_runs: dict[uuid.UUID, DemoQaRun] = {}
+    for demo_id, runs in _rows_for(
+        db, DemoQaRun, DemoQaRun.demo_id, [demo.id for demo in failed_demos], DemoQaRun.created_at
+    ).items():
+        qa_runs[demo_id] = runs[-1]
+    for demo in failed_demos:
+        business = owners.get(demo.business_id)
         if business:
-            qa = db.scalar(select(DemoQaRun).where(DemoQaRun.demo_id == demo.id).order_by(DemoQaRun.created_at.desc()))
+            qa = qa_runs.get(demo.id)
             failed = (
                 ", ".join(str(k) for k, v in (qa.checks if qa else {}).items() if v is False)
                 or "QA failed; inspect stored checks"
@@ -1412,12 +1665,10 @@ def not_outreach_ready_queue(db: Session = Depends(session)) -> HTMLResponse:
 @router.get("/ui/queues/weak-evidence", response_class=HTMLResponse)
 def weak_evidence_queue(db: Session = Depends(session)) -> HTMLResponse:
     items = []
-    for business in db.scalars(select(Business)).all():
-        score = db.scalar(
-            select(OpportunityScore)
-            .where(OpportunityScore.business_id == business.id)
-            .order_by(OpportunityScore.created_at.desc())
-        )
+    businesses = db.scalars(select(Business)).all()
+    scores = _latest_per_business(db, OpportunityScore, OpportunityScore.created_at, [b.id for b in businesses])
+    for business in businesses:
+        score = scores.get(business.id)
         if score and score.recommended_next_action in {"manual_review", "audit_required", "score_only"}:
             items.append((business, score.recommended_next_action, "verify business-owned evidence before any demo"))
     return _reason_queue("Weak evidence", items)
@@ -1464,7 +1715,7 @@ def operators(db: Session = Depends(session)) -> HTMLResponse:
         f"<tr><td>{esc(op.display_name)}</td><td>{esc(op.role)}</td><td>{'active' if op.active else 'inactive'}</td></tr>"
         for op in db.scalars(select(Operator).order_by(Operator.display_name)).all()
     )
-    form = "<h2>Add local operator</h2><form method='post' action='/ui/operators'><input name='display_name' required placeholder='Display name'><input name='role' value='operator'><button>Create</button></form>"
+    form = "<h2>Add local operator</h2><form method='post' action='/ui/operators'><label class='field'><span>Display name</span><input name='display_name' required></label><label class='field'><span>Role</span><select name='role'><option value='operator'>Operator</option><option value='reviewer'>Reviewer</option><option value='manager'>Manager</option><option value='owner'>Owner</option><option value='viewer'>Viewer</option></select></label><button>Create</button></form>"
     return page(
         "Operators",
         f"<table><tr><th>Name</th><th>Role</th><th>Status</th></tr>{rows}</table>{form}<p>Local trusted operator mode. No external authentication is configured.</p>",
@@ -1490,7 +1741,7 @@ def select_operator(db: Session = Depends(session)) -> HTMLResponse:
     )
     return page(
         "Select operator",
-        f"<form method='post'><select name='operator_id'>{options}</select><button>Use local operator</button></form>",
+        f"<form method='post'><label class='field'><span>Operator</span><select name='operator_id'>{options}</select></label><button>Use local operator</button></form>",
     )
 
 
@@ -1512,9 +1763,10 @@ def my_queue(request: Request, db: Session = Depends(session)) -> Response:
             OperatorAssignment.status.in_(["assigned", "in_progress"]),
         )
     ).all()
+    owners = {row.id: row for row in _rows_for_ids(db, [a.business_id for a in assignments])}
     rows = (
         "".join(
-            f"<li><a href='/ui/businesses/{assignment.business_id}'>{assignment.business_id}</a> · {assignment.status}</li>"
+            f"<li><a href='/ui/businesses/{assignment.business_id}'>{esc(owners[assignment.business_id].display_name if assignment.business_id in owners else 'Unknown business')}</a> · {esc(assignment.status)}</li>"
             for assignment in assignments
         )
         or "<li>No assigned leads</li>"
@@ -1533,16 +1785,42 @@ def safe_demo_path(demo: GeneratedDemo, db: Session) -> Path:
     return path
 
 
+PREVIEW_HEADERS = {
+    # Concept previews must never be indexed, cached by shared proxies, framed, or leak
+    # their tokenised URL via Referer; they are static HTML, so scripts are not allowed.
+    "X-Robots-Tag": "noindex, nofollow, noarchive",
+    "Cache-Control": "no-store",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": (
+        "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; "
+        "form-action 'none'; frame-ancestors 'none'"
+    ),
+}
+ROBOTS_META = '<meta name="robots" content="noindex, nofollow">'
+
+
+def render_demo_html(path: Path) -> str:
+    """Self-contained preview HTML: inline the stylesheet, add noindex and the disclaimer."""
+    content = path.read_text(encoding="utf-8")
+    stylesheet = path.with_name("styles.css")
+    link = '<link rel="stylesheet" href="styles.css">'
+    if link in content:
+        css = stylesheet.read_text(encoding="utf-8") if stylesheet.is_file() else ""
+        content = content.replace(link, f"<style>{css}</style>")
+    if 'name="robots"' not in content:
+        content = content.replace("<head>", f"<head>{ROBOTS_META}", 1)
+    if DISCLAIMER not in content:
+        content = content.replace("<body>", f"<body><p class='concept-banner'>{DISCLAIMER}</p>", 1)
+    return content
+
+
 @router.get("/ui/demos/{demo_id}/preview", response_class=HTMLResponse)
 def internal_preview(demo_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
     demo = db.get(GeneratedDemo, demo_id)
     if demo is None:
         raise HTTPException(404, "demo_not_found")
-    path = safe_demo_path(demo, db)
-    content = path.read_text(encoding="utf-8")
-    if DISCLAIMER not in content:
-        content = f"<div class='safety'>{DISCLAIMER}</div>" + content
-    return HTMLResponse(content)
+    return HTMLResponse(render_demo_html(safe_demo_path(demo, db)), headers=PREVIEW_HEADERS)
 
 
 @router.get("/ui/artifacts/demo/{demo_id}/index", response_class=HTMLResponse)
@@ -1591,14 +1869,20 @@ def preview_links(demo_id: uuid.UUID, db: Session = Depends(session)) -> HTMLRes
     ).all()
     rows = (
         "".join(
-            f"<li>{esc(link.label)} · {esc(link.status)} · expires {esc(link.expires_at)} · "
+            f"<li>{esc(link.label)} · {esc(status_label(link.status))} · expires {esc(fmt_dt(link.expires_at))} · "
             f"accesses {len(db.scalars(select(DemoPreviewAccessEvent).where(DemoPreviewAccessEvent.preview_link_id == link.id)).all())} "
-            f"<form method='post' action='/ui/preview-links/{link.id}/revoke'><button>Revoke</button></form></li>"
+            f"<form method='post' action='/ui/preview-links/{link.id}/revoke' onsubmit=\"return confirm('Withdraw this shared preview link?')\"><button>Revoke</button></form></li>"
             for link in links
         )
         or "<li>None</li>"
     )
-    form = f"<form method='post' action='/ui/demos/{demo_id}/preview-links'><input name='label' value='Concept preview'><input name='expires_days' type='number' min='1' max='30' value='7'><button>Create external preview link</button></form><p>Only share QA-passed/approved concept previews. Not an official website.</p>"
+    demo = db.get(GeneratedDemo, demo_id)
+    if demo is None:
+        raise HTTPException(404, "demo_not_found")
+    if demo.status in {"qa_passed", "approved"}:
+        form = f"<form method='post' action='/ui/demos/{demo_id}/preview-links'><label class='field'><span>Link label (internal)</span><input name='label' value='Concept preview'></label><label class='field'><span>Expires after (days, 1–30)</span><input name='expires_days' type='number' min='1' max='30' value='7'></label><button>Create external preview link</button></form><p>Share only with the business itself. The preview is labelled as an independent concept, not their official website.</p>"
+    else:
+        form = f"<div class='warning' role='status'>This concept cannot be shared while it is “{esc(status_label(demo.status))}”. <a href='/ui/demos/{demo_id}/qa'>See the QA checks</a>.</div>"
     return page("Preview links", form + f"<ul>{rows}</ul>")
 
 
@@ -1654,14 +1938,21 @@ def external_preview(token: str, request: Request, db: Session = Depends(session
     demo = db.get(GeneratedDemo, link.demo_id)
     if demo is None:
         raise HTTPException(404, "demo_not_found")
+    business = db.get(Business, demo.business_id)
+    if (
+        business is None
+        or business.state == "SUPPRESSED"
+        or db.scalar(select(SuppressionEntry.id).where(SuppressionEntry.business_id == demo.business_id)) is not None
+        or demo.status not in {"qa_passed", "approved"}
+    ):
+        db.add(DemoPreviewAccessEvent(preview_link_id=link.id, outcome="blocked", event_metadata={"external": True}))
+        db.commit()
+        raise HTTPException(410, "preview_expired_or_revoked")
     try:
-        path = safe_demo_path(demo, db)
-        content = path.read_text(encoding="utf-8")
-        if DISCLAIMER not in content:
-            content = f"<div class='safety'>{DISCLAIMER}</div>" + content
+        content = render_demo_html(safe_demo_path(demo, db))
         db.add(DemoPreviewAccessEvent(preview_link_id=link.id, outcome="served", event_metadata={"external": True}))
         db.commit()
-        return HTMLResponse(content)
+        return HTMLResponse(content, headers=PREVIEW_HEADERS)
     except HTTPException:
         db.add(DemoPreviewAccessEvent(preview_link_id=link.id, outcome="blocked", event_metadata={"external": True}))
         db.commit()
@@ -1781,7 +2072,7 @@ def pilot_detail(pilot_id: uuid.UUID, db: Session = Depends(session)) -> HTMLRes
     if p.status == "active":
         body += f"<form method='post' action='/ui/pilots/{p.id}/pause'><button>Pause</button></form>"
     if p.status != "closed":
-        body += f"<form method='post' action='/ui/pilots/{p.id}/close'><button>Close pilot</button></form>"
+        body += f"<form method='post' action='/ui/pilots/{p.id}/close' onsubmit=\"return confirm('Close this pilot? Closed pilots cannot be changed.')\"><button>Close pilot</button></form>"
     return page(p.name, body)
 
 
@@ -1863,7 +2154,7 @@ def pilot_readiness(pilot_id: uuid.UUID, db: Session = Depends(session)) -> HTML
         f"<tr><td>{esc(c['label'])}</td><td>{c['result']}</td><td>{'required' if c['required'] else 'informational'}</td></tr>"
         for c in summary["checks"]
     )
-    form = f"<form method='post' action='/ui/pilots/{p.id}/acknowledge-source-policy'><textarea name='acknowledgement_text' required>I acknowledge the pilot source policy and will not resell raw data or send automated messages.</textarea><button>Acknowledge source policy</button></form>"
+    form = f"<form method='post' action='/ui/pilots/{p.id}/acknowledge-source-policy'><label class='field'><span>Acknowledgement</span><textarea name='acknowledgement_text' required>I acknowledge the pilot source policy and will not resell raw data or send automated messages.</textarea></label><button>Acknowledge source policy</button></form>"
     guidance = {
         "operator_available": (
             "No active operator is configured.",
@@ -2101,18 +2392,33 @@ def proposal_review_page(proposal_id: uuid.UUID, db: Session = Depends(session))
         raise HTTPException(status_code=404, detail="proposal_not_found")
     return page(
         "Review proposal",
-        f'<p>Status: {html.escape(p.status)}</p><form method="post"><input name="reviewer" value="operator"><textarea name="notes"></textarea><button name="decision" value="approve">Approve</button><button name="decision" value="request_changes">Request changes</button></form>',
+        f'<p>Status: {html.escape(status_label(p.status))}</p><form method="post"><label class="field"><span>Reviewer</span><input name="reviewer" required autocomplete="name"></label><label class="field"><span>Notes</span><textarea name="notes"></textarea></label><fieldset><legend>Before approving, confirm each item</legend><label class="check"><input type="checkbox" name="evidence_backed"> Evidence is backed by the recorded sources</label><label class="check"><input type="checkbox" name="pricing_placeholder"> Pricing is a placeholder for operator completion</label><label class="check"><input type="checkbox" name="timeline_placeholder"> Timeline is a placeholder for operator completion</label><label class="check"><input type="checkbox" name="not_a_contract"> This is not a contract</label><label class="check"><input type="checkbox" name="not_sent"> This proposal has not been sent by LBOE</label></fieldset><button name="decision" value="approve">Approve proposal</button><button name="decision" value="request_changes">Request changes</button></form>',
     )
 
 
 @router.post("/ui/proposals/{proposal_id}/review")
 def proposal_review_submit(
-    proposal_id: uuid.UUID, decision: str = Form(...), reviewer: str = Form(...), notes: str = Form("")
+    proposal_id: uuid.UUID,
+    decision: str = Form(...),
+    reviewer: str = Form(...),
+    notes: str = Form(""),
+    evidence_backed: str | None = Form(None),
+    pricing_placeholder: str | None = Form(None),
+    timeline_placeholder: str | None = Form(None),
+    not_a_contract: str | None = Form(None),
+    not_sent: str | None = Form(None),
 ) -> RedirectResponse:
     from lboe_api.main import review_proposal
 
     with SessionLocal() as db:
-        review_proposal(proposal_id, {"decision": decision, "reviewer": reviewer, "notes": notes}, db)
+        checks = {
+            "evidence_backed": evidence_backed == "on",
+            "pricing_placeholder": pricing_placeholder == "on",
+            "timeline_placeholder": timeline_placeholder == "on",
+            "not_a_contract": not_a_contract == "on",
+            "not_sent": not_sent == "on",
+        }
+        review_proposal(proposal_id, {"decision": decision, "reviewer": reviewer, "notes": notes, "checks": checks}, db)
     return RedirectResponse(f"/ui/proposals/{proposal_id}", status_code=303)
 
 
@@ -2143,8 +2449,10 @@ def proposal_ready_queue(db: Session = Depends(session)) -> HTMLResponse:
         .where(ProposalPackage.status.in_(["draft", "changes_requested"]))
         .order_by(ProposalPackage.created_at)
     ).all()
+    owners = {row.id: row for row in _rows_for_ids(db, [p.business_id for p in proposals])}
     rows = "".join(
-        f'<li><a href="/ui/proposals/{p.id}">{html.escape(str(p.business_id))}</a> — {html.escape(p.status)}</li>'
+        f'<li><a href="/ui/proposals/{p.id}">{html.escape(owners[p.business_id].display_name if p.business_id in owners else "Unknown business")}</a>'
+        f" — {html.escape(p.proposal_type.replace('_', ' '))} · {html.escape(status_label(p.status))}</li>"
         for p in proposals
     )
     return page("Proposal-ready queue", f"<ul>{rows or '<li>Queue empty.</li>'}</ul>")
@@ -2185,7 +2493,7 @@ def delivery_detail(project_id: uuid.UUID, db: Session = Depends(session)) -> HT
     marks = "".join(f"<li>{html.escape(m.milestone_type)}: {html.escape(m.status)}</li>" for m in milestones)
     return page(
         project.title,
-        f"<p>Status: {html.escape(project.status)}</p><p>Safety: no credentials, payments, contracts, or automated deployment are stored here.</p><h2>Checklist</h2><ul>{checks}</ul><h2>Milestones</h2><ul>{marks}</ul>",
+        f"<p>Status: {html.escape(project.status)}</p><p>Safety: no credentials, payments, contracts, or automated deployment are stored here.</p><h2>Checklist</h2><ul>{checks}</ul><form method='post' action='/ui/delivery-projects/{project.id}/checklist'><label class='field'><span>Checklist category</span><input name='category' required></label><label class='field'><span>Checklist item</span><input name='code' required></label><label class='field'><span>Status</span><select name='status'><option value='verified'>Verified</option><option value='blocked'>Blocked</option><option value='pending'>Pending</option></select></label><label class='field'><span>Notes</span><textarea name='notes'></textarea></label><button>Update checklist</button></form><h2>Milestones</h2><ul>{marks}</ul><form method='post' action='/ui/delivery-projects/{project.id}/milestone'><label class='field'><span>Milestone</span><input name='milestone_type' required></label><label class='field'><span>Note</span><textarea name='note'></textarea></label><button>Record milestone</button></form><h2>Operator-recorded approval</h2><form method='post' action='/ui/delivery-projects/{project.id}/approval'><label class='field'><span>Approved item</span><input name='approved_item' required></label><label class='field'><span>Client assertion</span><input name='client_assertion'></label><label class='field'><span>Notes</span><textarea name='notes'></textarea></label><button>Record approval</button></form><form method='post' action='/ui/delivery-projects/{project.id}/export'><button>Generate local export</button></form>",
     )
 
 

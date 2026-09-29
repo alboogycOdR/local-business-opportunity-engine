@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from lboe_domain import (
     ALLOWED_TRANSITIONS,
@@ -23,7 +23,6 @@ from lboe_domain import (
     BusinessBriefRequest,
     DemoReviewRequest,
     DiscoveryRequest,
-    DiscoveryValidationError,
     InvalidTransition,
     LeadResponseLogRequest,
     LeadState,
@@ -36,16 +35,16 @@ from lboe_domain import (
     normalize_text,
     validate_transition,
 )
-from lboe_maps_scraper import MapsScraperAdapter, MapsScraperError
+from lboe_maps_scraper import MapsScraperAdapter
 from lboe_website_auditor import PlaywrightAuditAdapter
 from pydantic import BaseModel, Field
 from redis import Redis
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from .audit_service import audit_idempotency_key, execute_audit
+from .audit_service import audit_idempotency_key
 from .brief_service import brief_idempotency_key, execute_brief
 from .config import Settings
 from .db import (
@@ -106,11 +105,12 @@ from .db import (
 )
 from .demo_generator import VERSION as DEMO_VERSION
 from .demo_generator import qa_demo, qa_explanations, render_demo, write_artifacts
-from .discovery_service import discovery_idempotency_key, execute_discovery
-from .enrichment_service import enrichment_idempotency_key, execute_enrichment
+from .discovery_service import discovery_idempotency_key
+from .enrichment_service import enrichment_idempotency_key
 from .logging import configure_logging
 from .outreach_service import VERSION as OUTREACH_VERSION
 from .outreach_service import build_messages, safety_checks
+from .pilot_service import pilot_for_business
 from .proposal_service import eligibility as proposal_eligibility
 from .proposal_service import export_package
 from .proposal_service import generate as generate_proposal
@@ -119,6 +119,15 @@ from .reporting_service import build_pilot_report
 from .scoring_service import execute_score, score_idempotency_key
 
 logger = logging.getLogger("lboe.api")
+JOB_STREAM = "lboe:jobs:v1"
+MIGRATIONS_DIR = Path(__file__).resolve().parents[4] / "infrastructure" / "database" / "migrations"
+
+
+def expected_migration() -> str | None:
+    """Latest migration shipped with this build, so status never drifts from the repo."""
+    files = sorted(MIGRATIONS_DIR.glob("[0-9][0-9][0-9][0-9]_*.sql"))
+    return files[-1].name if files else None
+
 
 REVIEW_CHECKLIST = (
     ("concept_banner_visible", "Concept banner visible"),
@@ -268,7 +277,45 @@ def parse_records(request: ImportRequest) -> list[dict[str, Any]]:
 
 @app.get("/health")
 def health() -> dict[str, str]:
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail={"status": "unhealthy", "database": type(exc).__name__}) from exc
     return {"status": "ok"}
+
+
+def publish_job(job: Job, session: Session) -> dict[str, Any]:
+    """Publish only the durable PostgreSQL job ID; retries republish queued rows safely."""
+    if job.status != "queued":
+        return {"job_id": str(job.id), "status": job.status, "result": job.payload.get("result")}
+    try:
+        redis = Redis.from_url(settings.redis_url, socket_connect_timeout=0.5, socket_timeout=1.0)
+        try:
+            redis.xadd(JOB_STREAM, {"job_id": str(job.id)})
+        finally:
+            redis.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("job_publish_failed", extra={"job_id": str(job.id), "job_type": job.job_type})
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "job_queue_unavailable", "job_id": str(job.id), "status": "queued"},
+        ) from exc
+    return {"job_id": str(job.id), "status": job.status, "result": job.payload.get("result")}
+
+
+@app.get("/v1/jobs/{job_id}")
+def get_job(job_id: uuid.UUID, session: Session = Depends(db_session)) -> dict[str, Any]:
+    job = session.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job_not_found")
+    return {
+        "job_id": str(job.id),
+        "job_type": job.job_type,
+        "status": job.status,
+        "result": job.payload.get("result"),
+        "error": job.payload.get("error"),
+    }
 
 
 @app.get("/ready")
@@ -318,7 +365,7 @@ def system_status(session: Session = Depends(db_session)) -> dict[str, Any]:
         "status": "ok",
         "environment": settings.environment,
         "database": "ok",
-        "migration": {"current": current_migration, "expected": "0019_delivery_projects.sql"},
+        "migration": {"current": current_migration, "expected": expected_migration()},
         "storage": {
             "backend": settings.storage_backend,
             "artifact_root_writable": writable(settings.demo_artifact_root),
@@ -364,7 +411,7 @@ class DiscoveryRequestBody(BaseModel):
     idempotency_key: str | None = Field(default=None, max_length=300)
 
 
-@app.post("/v1/campaigns/{campaign_id}/discover")
+@app.post("/v1/campaigns/{campaign_id}/discover", status_code=202)
 async def discover_campaign(
     campaign_id: uuid.UUID,
     payload: DiscoveryRequestBody,
@@ -376,47 +423,39 @@ async def discover_campaign(
     key = discovery_idempotency_key(request)
     existing = session.scalar(select(Job).where(Job.idempotency_key == key))
     if existing:
-        return {"job_id": str(existing.id), "status": existing.status, "result": existing.payload.get("result")}
+        return publish_job(existing, session)
     job = Job(
         idempotency_key=key,
         job_type="DISCOVER_CAMPAIGN",
-        status="running",
-        payload={"request": request.model_dump(mode="json")},
+        status="queued",
+        payload=request.model_dump(mode="json"),
     )
     session.add(job)
     session.commit()
     session.refresh(job)
-    try:
-        result = await execute_discovery(session, discovery_adapter, request)
-    except DiscoveryValidationError as exc:
-        job.status = "failed"
-        job.payload = {"request": request.model_dump(mode="json"), "error": str(exc)}
-        session.commit()
-        raise HTTPException(
-            status_code=422, detail={"error": "invalid_discovery_request", "job_id": str(job.id)}
-        ) from exc
-    except MapsScraperError as exc:
-        job.status = "failed"
-        job.payload = {"request": request.model_dump(mode="json"), "error": str(exc)}
-        session.commit()
-        raise HTTPException(status_code=502, detail={"error": "discovery_failed", "job_id": str(job.id)}) from exc
-    except Exception as exc:  # noqa: BLE001
-        job.status = "failed"
-        job.payload = {"request": request.model_dump(mode="json"), "error": type(exc).__name__}
-        session.commit()
-        raise HTTPException(status_code=500, detail={"error": "discovery_failed", "job_id": str(job.id)}) from exc
-    job.status = "succeeded"
-    job.payload = {"request": request.model_dump(mode="json"), "result": result}
-    session.commit()
-    return {"job_id": str(job.id), "status": job.status, "result": result}
+    return publish_job(job, session)
 
 
-def business_dict(business: Business, session: Session) -> dict[str, Any]:
-    observations = session.scalars(select(SourceObservation).where(SourceObservation.business_id == business.id)).all()
-    contacts = session.scalars(select(Contact).where(Contact.business_id == business.id)).all()
-    external_identities = session.scalars(
-        select(BusinessExternalIdentity).where(BusinessExternalIdentity.business_id == business.id)
-    ).all()
+def business_dict(
+    business: Business,
+    session: Session,
+    *,
+    observations: list[SourceObservation] | None = None,
+    contacts: list[Contact] | None = None,
+    external_identities: list[BusinessExternalIdentity] | None = None,
+) -> dict[str, Any]:
+    if observations is None:
+        observations = list(
+            session.scalars(select(SourceObservation).where(SourceObservation.business_id == business.id)).all()
+        )
+    if contacts is None:
+        contacts = list(session.scalars(select(Contact).where(Contact.business_id == business.id)).all())
+    if external_identities is None:
+        external_identities = list(
+            session.scalars(
+                select(BusinessExternalIdentity).where(BusinessExternalIdentity.business_id == business.id)
+            ).all()
+        )
     return {
         "id": str(business.id),
         "campaign_id": str(business.campaign_id),
@@ -446,14 +485,50 @@ def business_dict(business: Business, session: Session) -> dict[str, Any]:
     }
 
 
+def _group_by_business(rows: Any) -> dict[uuid.UUID, list[Any]]:
+    grouped: dict[uuid.UUID, list[Any]] = {}
+    for row in rows:
+        grouped.setdefault(row.business_id, []).append(row)
+    return grouped
+
+
 @app.get("/v1/businesses")
 def list_businesses(
-    campaign_id: uuid.UUID | None = Query(default=None), session: Session = Depends(db_session)
+    response: Response,
+    campaign_id: uuid.UUID | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(db_session),
 ) -> list[dict[str, Any]]:
-    query = select(Business).order_by(Business.created_at)
-    if campaign_id:
-        query = query.where(Business.campaign_id == campaign_id)
-    return [business_dict(item, session) for item in session.scalars(query).all()]
+    """Paginated business list; related rows are loaded in three batched queries."""
+    filters = [Business.campaign_id == campaign_id] if campaign_id else []
+    total = session.scalar(select(func.count()).select_from(Business).where(*filters)) or 0
+    businesses = session.scalars(
+        select(Business).where(*filters).order_by(Business.created_at, Business.id).limit(limit).offset(offset)
+    ).all()
+    ids = [item.id for item in businesses]
+    observations = _group_by_business(
+        session.scalars(select(SourceObservation).where(SourceObservation.business_id.in_(ids))).all() if ids else []
+    )
+    contacts = _group_by_business(
+        session.scalars(select(Contact).where(Contact.business_id.in_(ids))).all() if ids else []
+    )
+    identities = _group_by_business(
+        session.scalars(select(BusinessExternalIdentity).where(BusinessExternalIdentity.business_id.in_(ids))).all()
+        if ids
+        else []
+    )
+    response.headers["X-Total-Count"] = str(total)
+    return [
+        business_dict(
+            item,
+            session,
+            observations=observations.get(item.id, []),
+            contacts=contacts.get(item.id, []),
+            external_identities=identities.get(item.id, []),
+        )
+        for item in businesses
+    ]
 
 
 @app.get("/v1/businesses/{business_id}")
@@ -510,7 +585,7 @@ def audit_dict(run: AuditRun, session: Session) -> dict[str, Any]:
     }
 
 
-@app.post("/v1/businesses/{business_id}/audit")
+@app.post("/v1/businesses/{business_id}/audit", status_code=202)
 async def audit_business(
     business_id: uuid.UUID, payload: AuditRequestBody, session: Session = Depends(db_session)
 ) -> dict[str, Any]:
@@ -532,26 +607,12 @@ async def audit_business(
     )
     key = audit_idempotency_key(request)
     existing = session.scalar(select(Job).where(Job.idempotency_key == key))
-    if existing and existing.payload.get("audit_run_id"):
-        run = session.get(AuditRun, uuid.UUID(str(existing.payload["audit_run_id"])))
-        if run:
-            return audit_dict(run, session)
-    job = Job(
-        idempotency_key=key, job_type="AUDIT_WEBSITE", status="running", payload={"business_id": str(business_id)}
-    )
+    if existing:
+        return publish_job(existing, session)
+    job = Job(idempotency_key=key, job_type="AUDIT_WEBSITE", status="queued", payload=request.model_dump(mode="json"))
     session.add(job)
     session.commit()
-    try:
-        run, _result = await execute_audit(session, audit_adapter, business, request)
-    except Exception as exc:  # noqa: BLE001
-        job.status = "failed"
-        job.payload = {"business_id": str(business_id), "error": type(exc).__name__}
-        session.commit()
-        raise HTTPException(status_code=502, detail={"error": "audit_failed", "job_id": str(job.id)}) from exc
-    job.status = "succeeded"
-    job.payload = {"business_id": str(business_id), "audit_run_id": str(run.id)}
-    session.commit()
-    return audit_dict(run, session)
+    return publish_job(job, session)
 
 
 @app.get("/v1/businesses/{business_id}/audits")
@@ -601,7 +662,7 @@ def enrichment_dict(run: EnrichmentRun, session: Session) -> dict[str, Any]:
     }
 
 
-@app.post("/v1/businesses/{business_id}/enrich")
+@app.post("/v1/businesses/{business_id}/enrich", status_code=202)
 async def enrich_business(
     business_id: uuid.UUID, payload: EnrichmentRequestBody | None = None, session: Session = Depends(db_session)
 ) -> dict[str, Any]:
@@ -615,27 +676,12 @@ async def enrich_business(
     )
     key = enrichment_idempotency_key(request)
     existing = session.scalar(select(Job).where(Job.idempotency_key == key))
-    if existing and existing.payload.get("enrichment_run_id"):
-        run = session.get(EnrichmentRun, uuid.UUID(str(existing.payload["enrichment_run_id"])))
-        if run:
-            return enrichment_dict(run, session)
-    job = Job(
-        idempotency_key=key, job_type="ENRICH_BUSINESS", status="running", payload={"business_id": str(business_id)}
-    )
+    if existing:
+        return publish_job(existing, session)
+    job = Job(idempotency_key=key, job_type="ENRICH_BUSINESS", status="queued", payload=request.model_dump(mode="json"))
     session.add(job)
     session.commit()
-    session.refresh(job)
-    try:
-        run, _result = await execute_enrichment(session, request)
-    except Exception as exc:  # noqa: BLE001
-        job.status = "failed"
-        job.payload = {"business_id": str(business_id), "error": type(exc).__name__}
-        session.commit()
-        raise HTTPException(status_code=502, detail={"error": "enrichment_failed", "job_id": str(job.id)}) from exc
-    job.status = "succeeded"
-    job.payload = {"business_id": str(business_id), "enrichment_run_id": str(run.id)}
-    session.commit()
-    return enrichment_dict(run, session)
+    return publish_job(job, session)
 
 
 @app.get("/v1/businesses/{business_id}/enrichments")
@@ -1788,6 +1834,9 @@ def create_outreach_log(
     business = session.get(Business, business_id)
     if business is None:
         raise HTTPException(status_code=404, detail="business_not_found")
+    pilot = pilot_for_business(session, business_id)
+    if pilot is not None and pilot.mode == "dry_run":
+        raise HTTPException(status_code=409, detail="dry_run_manual_contact_blocked")
     package = session.get(OutreachDraftPackage, request.outreach_draft_package_id)
     message = session.get(OutreachDraftMessage, request.outreach_draft_message_id)
     key = (
@@ -1945,6 +1994,9 @@ def create_crm_event(
     business = session.get(Business, business_id)
     if business is None:
         raise HTTPException(status_code=404, detail="business_not_found")
+    pilot = pilot_for_business(session, business_id)
+    if pilot is not None and pilot.mode == "dry_run":
+        raise HTTPException(status_code=409, detail="dry_run_crm_logging_blocked")
     execution = None
     if request.outreach_execution_record_id:
         execution = session.get(OutreachExecutionRecord, request.outreach_execution_record_id)
@@ -2340,6 +2392,11 @@ def suppress_business(
         raise HTTPException(status_code=404, detail="business_not_found")
     entry = SuppressionEntry(business_id=business.id, reason=request.reason, channel=request.channel)
     session.add(entry)
+    for link in session.scalars(
+        select(DemoPreviewLink).where(DemoPreviewLink.business_id == business.id, DemoPreviewLink.status == "active")
+    ).all():
+        link.status = "revoked"
+        link.revoked_at = datetime.now(UTC)
     current = LeadState(business.state)
     if current != LeadState.SUPPRESSED and LeadState.SUPPRESSED in ALLOWED_TRANSITIONS.get(current, frozenset()):
         business.state = LeadState.SUPPRESSED.value
@@ -2822,6 +2879,15 @@ def list_proposal_exports(proposal_id: uuid.UUID, session: Session = Depends(db_
     ]
 
 
-from .ui.routes import router as ui_router  # noqa: E402
+from fastapi.exceptions import RequestValidationError  # noqa: E402
+from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
 
-app.include_router(ui_router)  # type: ignore[has-type]
+from .ui.presentation import ui_http_exception_handler, ui_validation_exception_handler  # noqa: E402
+from .ui.routes import router as ui_router  # noqa: E402
+from .ui.workflow import router as ui_workflow_router  # noqa: E402
+
+app.include_router(ui_router)
+app.include_router(ui_workflow_router)
+# /ui and /preview errors render as pages; /v1 keeps FastAPI's JSON error bodies.
+app.add_exception_handler(StarletteHTTPException, ui_http_exception_handler)
+app.add_exception_handler(RequestValidationError, ui_validation_exception_handler)
