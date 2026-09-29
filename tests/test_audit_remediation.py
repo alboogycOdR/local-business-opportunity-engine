@@ -16,6 +16,14 @@ from sqlalchemy.orm import Session, sessionmaker
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "worker" / "src"))
 
 
+def test_operator_navigation_has_compact_mobile_disclosure() -> None:
+    with TestClient(api.app) as client:
+        response = client.get("/ui")
+    assert response.status_code == 200
+    assert "<details class='mobile-nav'><summary>Menu</summary>" in response.text
+    assert "class='desktop-nav' aria-label='Primary'" in response.text
+
+
 def test_worker_terminal_result_is_persisted_and_duplicate_delivery_is_noop() -> None:
     worker_module = importlib.import_module("lboe_worker.worker")
     worker_class = worker_module.JobWorker

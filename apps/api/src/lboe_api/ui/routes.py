@@ -72,7 +72,7 @@ from lboe_api.reporting_service import build_pilot_report
 
 from .presentation import fmt_dt, state_label, status_label
 
-router = APIRouter()
+router: APIRouter = APIRouter()
 LEADS_PER_PAGE = 50
 DISCLAIMER = "Concept preview prepared independently for demonstration. Not the official website of this business."
 
@@ -177,7 +177,8 @@ def page(title: str, body: str) -> HTMLResponse:
         f"<title>{esc(title)} · LBOE</title><link rel='stylesheet' href='/ui/static/ui.css'></head><body>"
         "<a class='skip-link' href='#main'>Skip to main content</a>"
         f"<header><a class='brand' href='/ui'><strong>LBOE Operator Cockpit</strong></a>"
-        f"<nav aria-label='Primary'>{nav}</nav></header>"
+        f"<details class='mobile-nav'><summary>Menu</summary><nav aria-label='Primary'>{nav}</nav></details>"
+        f"<nav class='desktop-nav' aria-label='Primary'>{nav}</nav></header>"
         "<aside class='safety' aria-label='Safety notice'>System delivery is disabled. LBOE does not send email, "
         "WhatsApp, SMS, review requests, or CRM messages.</aside>"
         f"<main id='main' tabindex='-1'><nav class='breadcrumb muted' aria-label='Breadcrumb'><a href='/ui'>Dashboard</a> / "

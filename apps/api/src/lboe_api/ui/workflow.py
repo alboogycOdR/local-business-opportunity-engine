@@ -41,7 +41,7 @@ from lboe_api.pilot_service import pilot_for_business
 from lboe_api.ui.presentation import friendly, local_input_value, parse_local_datetime, status_label
 from lboe_api.ui.routes import session
 
-router = APIRouter()
+router: APIRouter = APIRouter()
 
 REVIEWABLE_DEMO_STATUSES = {"qa_passed", "review_pending", "changes_requested", "manual_edit_required"}
 CONSENT_BASIS_OPTIONS = (

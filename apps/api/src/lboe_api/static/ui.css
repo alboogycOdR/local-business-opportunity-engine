@@ -30,3 +30,5 @@ legend{font-weight:800;padding:0 6px}
 :focus-visible{outline:3px solid #1f5fbf;outline-offset:2px}
 @media (prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 @media print{header,.safety,.skip-link,form,.pager{display:none}main{padding:0}}
+.mobile-nav{display:none}
+@media(max-width:650px){header{position:relative;align-items:center;flex-direction:row;justify-content:space-between;padding:10px 16px}.desktop-nav{display:none}.mobile-nav{display:block;position:relative}.mobile-nav summary{min-height:44px;min-width:72px;padding:10px 14px;border:1px solid #c8d1df;border-radius:10px;background:#fff;color:var(--ink);font-weight:700;cursor:pointer}.mobile-nav[open] nav{position:absolute;z-index:20;right:0;top:calc(100% + 8px);display:grid;min-width:190px;gap:4px;padding:8px;border:1px solid #d7dee8;border-radius:12px;background:#fff;box-shadow:var(--shadow)}.mobile-nav nav a{min-height:44px;display:flex;align-items:center;padding:8px 12px;border-radius:8px}.mobile-nav nav a:hover{background:#edf2f8}}
