@@ -33,6 +33,8 @@ class CandidateBusiness(BaseModel):
     category: str | None = None
     locality: str | None = None
     address_text: str | None = None
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
     phone: str | None = None
     website: str | None = None
     source_url: str | None = None

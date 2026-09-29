@@ -74,6 +74,8 @@ def _record_candidate_facts(session: Session, business: Business, candidate: Can
         "identity.category": candidate.category,
         "identity.locality": candidate.locality,
         "identity.address_text": candidate.address_text,
+        "location.latitude": candidate.latitude,
+        "location.longitude": candidate.longitude,
         "contact.phone": candidate.phone,
         "contact.website": candidate.website,
         "identity.external_id": candidate.source_id,

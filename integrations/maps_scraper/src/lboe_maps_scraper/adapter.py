@@ -106,6 +106,14 @@ def normalize_scraper_rows(csv_text: str, source_ref: str) -> list[CandidateBusi
         if not name:
             continue
         source_id = (row.get("place_id") or row.get("id") or "").strip() or None
+        try:
+            latitude = float(row.get("latitude") or row.get("lat") or "")
+        except ValueError:
+            latitude = None
+        try:
+            longitude = float(row.get("longitude") or row.get("lon") or "")
+        except ValueError:
+            longitude = None
         candidates.append(
             CandidateBusiness(
                 source="maps_scraper",
@@ -113,6 +121,8 @@ def normalize_scraper_rows(csv_text: str, source_ref: str) -> list[CandidateBusi
                 display_name=name,
                 category=(row.get("category") or None),
                 address_text=(row.get("address") or None),
+                latitude=latitude,
+                longitude=longitude,
                 phone=(row.get("phone") or None),
                 website=(row.get("website") or None),
                 observed_at=observed_at,
