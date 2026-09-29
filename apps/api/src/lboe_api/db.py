@@ -835,11 +835,9 @@ def make_engine(database_url: str, *, pool_timeout_seconds: float | None = None)
         raise ValueError("pool_timeout_seconds must be between 0.1 and 10 seconds")
     kwargs: dict[str, Any] = {"pool_pre_ping": True, "future": True}
     if database_url.startswith("sqlite"):
-        kwargs["connect_args"] = {"check_same_thread": False}
-        if ":memory:" in database_url:
-            kwargs["poolclass"] = StaticPool
-        else:
-            kwargs["pool_timeout"] = timeout
+        # Preserve SQLite's StaticPool behavior for both `sqlite://` and explicit
+        # `:memory:` URLs. StaticPool does not implement QueuePool's acquisition timeout.
+        kwargs.update({"connect_args": {"check_same_thread": False}, "poolclass": StaticPool})
     elif database_url.startswith("postgresql"):
         kwargs["pool_timeout"] = timeout
         # timestamp-without-time-zone columns are converted using the session zone; pin it.
