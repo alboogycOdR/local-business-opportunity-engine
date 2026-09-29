@@ -44,19 +44,100 @@ def test_LBOE_AUD_110_demo_awaiting_review_can_be_approved_from_the_ui(client: A
     assert review_forms, "no UI form submits a demo review decision (approve/reject/request changes)"
 
 
-@pytest.mark.parametrize(
-    "step",
-    ["outreach-draft", "outreach-readiness", "outreach-log", "crm-event", "follow-ups"],
-)
-def test_LBOE_AUD_110_operator_workflow_steps_have_ui(client: Any, seed: Any, step: str) -> None:
-    """Every human-gated pipeline step must be reachable without hand-written API calls."""
+def _submit(client: Any, path: str, action_pattern: str, choices: dict[str, Any]) -> Any:
+    """Submit the first form on ``path`` whose action matches, like a browser would.
+
+    Hidden/default values are kept; ``choices`` sets text fields, picks radio/select
+    values, and ticks checkboxes (``True`` ticks every box with that name).
+    """
+    soup = _soup(client, path)
+    form = next(
+        (f for f in soup.find_all("form") if re.search(action_pattern, f.get("action") or "")),
+        None,
+    )
+    assert form is not None, f"{path}: no form posting to {action_pattern}"
+    data: list[tuple[str, str]] = []
+    for field in form.find_all(["input", "select", "textarea"]):
+        name = field.get("name")
+        if not name:
+            continue
+        kind = (field.get("type") or "").lower()
+        wanted = choices.get(name)
+        if kind == "checkbox":
+            if wanted is True or (isinstance(wanted, list) and field.get("value") in wanted):
+                data.append((name, field.get("value", "on")))
+        elif kind == "radio":
+            if wanted == field.get("value"):
+                data.append((name, field["value"]))
+        elif field.name == "select":
+            options = [o.get("value") for o in field.find_all("option") if o.get("value")]
+            data.append((name, str(wanted) if wanted is not None else options[0]))
+        else:
+            data.append((name, str(wanted) if wanted is not None else (field.get("value") or field.text or "")))
+    payload: dict[str, list[str]] = {}
+    for name, value in data:
+        payload.setdefault(name, []).append(value)
+    response = client.post(form["action"], data=payload, follow_redirects=False)
+    assert response.status_code in {302, 303}, response.text[:300]
+    location = response.headers["location"]
+    assert "action_error" not in location, f"{form['action']} refused: {location}"
+    return location
+
+
+def _state(client: Any, business_id: str) -> str:
+    return str(client.get(f"/v1/businesses/{business_id}").json()["state"])
+
+
+def test_LBOE_AUD_110_golden_path_completes_through_ui_forms(client: Any, seed: Any) -> None:
+    """From a QA-passed concept to a recorded reply using only operator-console forms.
+
+    Baseline: none of these forms exist, so an operator stalls at REVIEW_PENDING.
+    """
     campaign = seed.campaign()
     [business_id] = seed.businesses(campaign, 1)
-    html = (
-        client.get(f"/ui/businesses/{business_id}").text
-        + client.get(f"/ui/businesses/{business_id}/outreach-workbench").text
+    demo = seed.demo(business_id)
+    assert demo["status"] == "qa_passed" and _state(client, business_id) == "REVIEW_PENDING"
+    page = f"/ui/businesses/{business_id}"
+    _submit(client, page, r"/demos/[^/]+/review$", {"checklist": True, "decision": "approve", "reviewer": "Ops"})
+    assert _state(client, business_id) == "APPROVED_FOR_OUTREACH"
+    _submit(client, page, r"/outreach-draft$", {"channels": ["email"]})
+    _submit(client, page, r"/outreach-readiness$", {"reviewer": "Ops"})
+    assert _state(client, business_id) == "CONSENT_PENDING"
+    _submit(
+        client,
+        page,
+        r"/outreach-readiness$",
+        {
+            "consent_basis_type": "explicit_permission_recorded",
+            "consent_basis_notes": "Owner asked for a concept at the 2 Oct market stall",
+            "selected_channels": ["email"],
+            "decision": "approve_for_manual_outreach",
+            "reviewer": "Ops",
+        },
     )
-    assert re.search(rf"action=['\"][^'\"]*{step}", html), f"no UI form for the '{step}' step"
+    assert _state(client, business_id) == "OUTREACH_READY"
+    _submit(client, page, r"/outreach-log$", {"operator": "Ops", "notes": "Sent from my own mailbox"})
+    assert _state(client, business_id) == "CONTACTED"
+    _submit(client, page, r"/crm-event$", {"event_type": "reply_received", "summary": "Asked for pricing", "operator": "Ops"})
+    assert _state(client, business_id) == "REPLIED"
+    _submit(client, page, r"/follow-ups$", {"reason": "Send pricing", "due_at": "2026-10-05T10:00"})
+    assert "Send pricing" in client.get("/ui/queues/follow-up").text
+
+
+def test_LBOE_AUD_110_consent_step_requires_a_stated_basis(client: Any, seed: Any) -> None:
+    """The consent form must not let an operator approve with the default 'unknown' basis."""
+    campaign = seed.campaign()
+    [business_id] = seed.businesses(campaign, 1)
+    demo = seed.demo(business_id)
+    seed.approve(demo["id"])
+    page = f"/ui/businesses/{business_id}"
+    _submit(client, page, r"/outreach-draft$", {"channels": ["email"]})
+    _submit(client, page, r"/outreach-readiness$", {"reviewer": "Ops"})
+    soup = _soup(client, page)
+    basis = soup.find("select", attrs={"name": "consent_basis_type"})
+    assert basis is not None and basis.get("required") is not None
+    first = basis.find("option")
+    assert first is not None and first.get("value") == "", "a real basis must be chosen, not defaulted"
 
 
 # --- Safety legibility ----------------------------------------------------------------------
@@ -195,7 +276,8 @@ def test_LBOE_AUD_119_times_are_shown_in_operator_timezone(client: Any, seed: An
 
 
 def test_LBOE_AUD_120_ui_errors_render_as_pages_not_json(client: Any, seed: Any) -> None:
-    _business_id, demo = _no_website_demo(seed, display_name="QA fail & Co " + uuid.uuid4().hex[:6])
+    business_id, demo = _no_website_demo(seed)
+    client.post(f"/v1/businesses/{business_id}/suppressions", json={"reason": "opted out"})  # sharing now 409s
     for method, path, data in (
         ("post", f"/ui/demos/{demo['id']}/preview-links", {"label": "x", "expires_days": "7"}),
         ("get", f"/ui/businesses/{uuid.uuid4()}", None),
@@ -233,7 +315,10 @@ def _contrast(foreground: str, background: str) -> float:
 
 def test_LBOE_AUD_114_design_tokens_meet_wcag_aa_contrast() -> None:
     css = (TARGET / "apps/api/src/lboe_api/static/ui.css").read_text(encoding="utf-8")
-    tokens = dict(re.findall(r"--([\w-]+):\s*(#[0-9a-fA-F]{6})", css))
+    tokens = {
+        name: value if len(value) == 7 else "#" + "".join(ch * 2 for ch in value[1:])
+        for name, value in re.findall(r"--([\w-]+):\s*(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})\b", css)
+    }
     eyebrow = re.search(r"\.eyebrow\{[^}]*color:\s*(var\(--[\w-]+\)|#[0-9a-fA-F]{6})", css)
     assert eyebrow
     eyebrow_colour = eyebrow.group(1)
@@ -285,7 +370,7 @@ def test_LBOE_AUD_116_page_structure(client: Any, seed: Any, path: str) -> None:
     outside = [
         c.name + "." + ".".join(c.get("class", []))
         for c in body_children
-        if c.name not in {"header", "main", "footer", "nav", "a"}
+        if c.name not in {"header", "main", "footer", "nav", "a", "aside"}
     ]
     assert not outside, f"content outside landmarks: {outside}"
     for th in soup.find_all("th"):
@@ -294,7 +379,7 @@ def test_LBOE_AUD_116_page_structure(client: Any, seed: Any, path: str) -> None:
 
 def test_LBOE_AUD_117_mobile_navigation_targets_are_at_least_24px() -> None:
     css = (TARGET / "apps/api/src/lboe_api/static/ui.css").read_text(encoding="utf-8")
-    rule = re.search(r"(?:^|\})\s*nav a\s*\{([^}]*)\}", css)
+    rule = re.search(r"(?:^|\})\s*(?:header )?nav a\s*\{([^}]*)\}", css)
     assert rule, "no 'nav a' rule"
     min_height = re.search(r"min-height:\s*(\d+)px", rule.group(1))
     padding = re.search(r"padding:\s*(\d+)px", rule.group(1))

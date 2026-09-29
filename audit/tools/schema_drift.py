@@ -47,7 +47,9 @@ def main(url: str) -> int:
         nulls = []
         for col in set(orm_cols) & set(db_cols):
             if bool(orm_cols[col].nullable) != bool(db_cols[col]["nullable"]):
-                nulls.append({"column": col, "orm_nullable": orm_cols[col].nullable, "db_nullable": db_cols[col]["nullable"]})
+                nulls.append(
+                    {"column": col, "orm_nullable": orm_cols[col].nullable, "db_nullable": db_cols[col]["nullable"]}
+                )
         if nulls:
             report["nullability_drift"][name] = nulls  # type: ignore[index]
         db_uniques = {tuple(sorted(u["column_names"])) for u in insp.get_unique_constraints(name)}
@@ -68,7 +70,10 @@ def main(url: str) -> int:
                 "only_in_orm": sorted(map(list, orm_uniques - db_uniques)),
                 "only_in_db": sorted(map(list, db_uniques - orm_uniques - {tuple(sorted(pk))})),
             }
-        db_fks = {(tuple(f["constrained_columns"]), f["referred_table"], (f.get("options") or {}).get("ondelete")) for f in insp.get_foreign_keys(name)}
+        db_fks = {
+            (tuple(f["constrained_columns"]), f["referred_table"], (f.get("options") or {}).get("ondelete"))
+            for f in insp.get_foreign_keys(name)
+        }
         orm_fks = {((fk.parent.name,), fk.column.table.name, fk.ondelete) for fk in orm_t.foreign_keys}
         if {(a, b) for a, b, _ in db_fks} != {(a, b) for a, b, _ in orm_fks}:
             report["fk_drift"][name] = {  # type: ignore[index]
@@ -77,7 +82,17 @@ def main(url: str) -> int:
             }
         report["index_counts"][name] = {"db": len(insp.get_indexes(name)), "orm": len(orm_t.indexes)}  # type: ignore[index]
     print(json.dumps(report, indent=2, default=str))
-    drift = any(report[k] for k in ("tables_only_in_orm", "tables_only_in_migrations", "column_drift", "nullability_drift", "unique_drift", "fk_drift"))
+    drift = any(
+        report[k]
+        for k in (
+            "tables_only_in_orm",
+            "tables_only_in_migrations",
+            "column_drift",
+            "nullability_drift",
+            "unique_drift",
+            "fk_drift",
+        )
+    )
     return 1 if drift else 0
 
 

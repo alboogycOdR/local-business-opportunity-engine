@@ -1,6 +1,6 @@
 """Dump pilot reports produced by a given checkout, for before/after equivalence checks.
 
-    python audit/tools/report_golden.py <checkout-root> <database-url> <out.json>
+python audit/tools/report_golden.py <checkout-root> <database-url> <out.json>
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """Dump Opportunity Cards built by a given checkout for before/after equivalence checks.
 
-    python audit/tools/cards_golden.py <checkout-root> <database-url> <out.json>
+python audit/tools/cards_golden.py <checkout-root> <database-url> <out.json>
 """
 
 from __future__ import annotations
