@@ -23,17 +23,16 @@ The repository Compose file does not define an API service. Deployment configura
 
 - The audit's performance patch reported the campaign report scoping improvement, but the broader report aggregation rewrite is deferred: populated before/after golden equivalence data was unavailable. Do not treat the 10k-lead report residual as closed.
 - The audit's 43 regression tests were written against synchronous discovery/audit/enrichment responses. G4 intentionally changes those three endpoints to queued responses per the approved Redis worker contract. Such tests must be bridged by an owned test-only worker harness or updated acceptance assertions; production code must not execute those jobs inline just to satisfy the old synchronous assumptions.
-- Proposal/delivery forms were updated where covered by the supplied API/UI patch; review the remaining checklist details before a paid-client delivery. Full inbox-style queue refinement and the Jinja autoescaping migration remain hardening work.
+- Proposal and delivery workflow forms are available in the operator UI. Full inbox-style queue refinement and a broader Jinja autoescaping migration remain hardening work.
 - Operator identity is still a typed name in several decisions. This change does not add a new authentication/authorization model.
 - Audit security workstreams were not run. UX/performance audit results are not a security review or production-readiness sign-off.
 - Validate PostgreSQL migration/type parity separately using a disposable database; never apply audit migrations to a prospect or production database as part of this remediation.
 
 ## G4 validation record
 
-- Focused integration tests: `python -m pytest tests/test_audit_remediation.py tests/test_api_discovery.py tests/test_openapi.py -q` — **4 passed**.
-- Ruff check and format check: **passed**.
-- Focused mypy over the changed API/UI modules and owned tests: **passed**.
-- Full project pytest: **7 failed, remaining tests passed**. Each failure is caused by the joined G1 engine factory passing PostgreSQL's `pool_timeout` to SQLite: `test_audit_persistence_history_and_lifecycle`; four `tests/test_brief.py` cases; and `test_score_history_is_append_only_and_audited_lead_transitions`. This is outside G4 ownership and awaits the G1 compatibility fix.
-- Full mypy: stopped on the pre-existing duplicate module path `tests/conftest.py` vs `apps/worker/tests/conftest.py`; the G4-scoped mypy command passes.
-- Audit regression suite: **15 failures**. The failing seed-based UX/performance tests invoke `/v1/businesses/{id}/audit` expecting a completed synchronous result; the new endpoint correctly returns `503 job_queue_unavailable` while preserving the queued row when the audit test environment has no Redis/worker. The unchanged audit suite does not provide a bridge to process these queued jobs. No implementation was changed to bypass the Redis worker contract. The remaining audit assertions are blocked by that fixture mismatch, so the suite is not reported green.
-- `docker compose config`: passed. No G4 schema change was made, so G4 did not apply migrations.
+- Focused integration tests: `python -m pytest tests/test_audit_remediation.py tests/test_api_discovery.py tests/test_openapi.py -q` — **5 passed**.
+- Joined project tests: `python -m pytest tests` — **60 passed**.
+- Ruff check and format check: **passed**; `git diff --check`: **passed**.
+- Focused mypy over the changed API/UI modules and owned tests: **passed**. Full `mypy apps packages integrations tests` remains blocked by duplicate `conftest` module names in the pre-existing integration and worker test directories.
+- Audit regression suite, run against the joined checkout with `LBOE_AUDIT_TARGET` set: **28 passed, 15 failed**. The 15 failing seed-based UX/performance tests require synchronous discovery/audit/enrichment completion or data derived from it. The current endpoints correctly create queued jobs and return `503 job_queue_unavailable` when the audit fixture has no Redis/worker. The unchanged audit suite has no bridge to process those jobs. No production behavior was made synchronous to silence this fixture mismatch; the audit suite therefore remains partially red pending its asynchronous test harness/acceptance updates.
+- `docker compose config`: passed. No G4 schema change was made, so G4 did not apply migrations. The G1 schema changes were verified separately against a disposable PostgreSQL database.
