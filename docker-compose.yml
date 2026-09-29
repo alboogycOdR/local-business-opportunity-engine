@@ -28,6 +28,34 @@ services:
       timeout: 3s
       retries: 10
 
+  worker:
+    build: .
+    command: ["python", "-m", "lboe_worker.worker"]
+    environment:
+      LBOE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-lboe}:${POSTGRES_PASSWORD:-lboe_dev_only}@postgres:5432/${POSTGRES_DB:-lboe}
+      LBOE_REDIS_URL: redis://redis:6379/0
+      PYTHONPATH: /app/apps/worker/src:/app/apps/api/src:/app/packages/domain/src:/app/packages/scoring/src:/app/integrations/maps_scraper/src:/app/integrations/website_auditor/src
+      LBOE_AUDIT_ARTIFACT_ROOT: /app/artifacts/audits
+      LBOE_WORKER_HEARTBEAT: /tmp/lboe-worker-heartbeat
+      LBOE_WORKER_NAME: ${LBOE_WORKER_NAME:-worker-1}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - lboe_artifacts:/app/artifacts
+    mem_limit: 1g
+    cpus: 1.0
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-m", "lboe_worker.healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+
 volumes:
   lboe_postgres:
   lboe_redis:
+  lboe_artifacts:
