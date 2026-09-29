@@ -1,0 +1,17 @@
+[
+  {
+    "path": "/v1/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 300,
+    "concurrency": 30,
+    "statuses": {
+      "200": 300
+    },
+    "throughput_rps": 164.2,
+    "p50_ms": 170.5,
+    "p95_ms": 274.5,
+    "max_ms": 356.6,
+    "pg_connections_baseline": 6,
+    "pg_connections_peak": 15,
+    "pg_connections_after": 6
+  }
+]

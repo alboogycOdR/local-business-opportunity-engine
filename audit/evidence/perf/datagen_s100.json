@@ -1,0 +1,98 @@
+{
+  "campaign_id": "837f6f06-3c17-4f97-897e-d83432fbba05",
+  "businesses": 100,
+  "worked": 60,
+  "elapsed_s": 14.3,
+  "outcomes": {
+    "contacted": 10,
+    "delivery_project": 6,
+    "demo:approved": 25,
+    "demo:not_demo_eligible:archive": 3,
+    "demo:qa_failed:": 17,
+    "demo:qa_passed": 31,
+    "import_failures": 0,
+    "suppressed": 7
+  },
+  "timings": {
+    "POST import (500 rows)": {
+      "n": 1,
+      "p50_ms": 708.5,
+      "p95_ms": 708.5,
+      "max_ms": 708.5,
+      "total_s": 0.71
+    },
+    "POST audit": {
+      "n": 60,
+      "p50_ms": 29.1,
+      "p95_ms": 37.5,
+      "max_ms": 43.4,
+      "total_s": 1.81
+    },
+    "POST score": {
+      "n": 80,
+      "p50_ms": 32.1,
+      "p95_ms": 41.7,
+      "max_ms": 142.9,
+      "total_s": 2.76
+    },
+    "POST brief": {
+      "n": 80,
+      "p50_ms": 36.2,
+      "p95_ms": 44.8,
+      "max_ms": 122.6,
+      "total_s": 3.02
+    },
+    "POST demo": {
+      "n": 51,
+      "p50_ms": 37.9,
+      "p95_ms": 58.5,
+      "max_ms": 64.9,
+      "total_s": 1.97
+    },
+    "POST demo review": {
+      "n": 25,
+      "p50_ms": 29.8,
+      "p95_ms": 40.6,
+      "max_ms": 46.9,
+      "total_s": 0.77
+    },
+    "POST outreach-draft": {
+      "n": 19,
+      "p50_ms": 36.7,
+      "p95_ms": 52.7,
+      "max_ms": 85.1,
+      "total_s": 0.76
+    },
+    "POST readiness": {
+      "n": 32,
+      "p50_ms": 30.2,
+      "p95_ms": 43.2,
+      "max_ms": 49.1,
+      "total_s": 1.02
+    },
+    "POST outreach-log": {
+      "n": 10,
+      "p50_ms": 22.5,
+      "p95_ms": 28.4,
+      "max_ms": 33.5,
+      "total_s": 0.24
+    },
+    "POST crm-event": {
+      "n": 18,
+      "p50_ms": 17.8,
+      "p95_ms": 24.1,
+      "max_ms": 24.2,
+      "total_s": 0.33
+    },
+    "POST proposal": {
+      "n": 6,
+      "p50_ms": 44.2,
+      "p95_ms": 45.3,
+      "max_ms": 59.4,
+      "total_s": 0.28
+    }
+  },
+  "sample_business_id": "be18b0e5-94fb-4117-b1a2-d0f0721be2ad",
+  "generated_at": "2026-09-29T13:37:06.144632+00:00",
+  "run_id": "60a96c9c-e73e-4db0-8b8b-c3a4552532f7"
+}

@@ -1,0 +1,19 @@
+display_name | addr | failed
+Anne's Hair & Beauty 00002 | Shop 9, Floor 3, 279 Kloof Street, Woodstock, Cape Town | business_name_present
+Anne's Styling 00005 | Shop 11, Floor 1, 155 R44, Green Point, Cape Town | business_name_present
+Atlantic Hair & Beauty 00053 | Shop 23, Floor 2, 8 Voortrekker Road, Mitchells Plain, Cape  | business_name_present
+Blue Door Hair 00012 | Shop 5, Floor 1, 346 Kloof Street, Parow, Cape Town | no_fake_prices
+Crown & Co Barbers 00052 | Shop 15, Floor 1, 123 R44, Claremont, Cape Town | business_name_present
+Crown & Co Hair 00040 | Shop 6, Floor 3, 264 Main Road, Stellenbosch, Cape Town | no_fake_prices,business_name_present
+Crown & Co Spa 00008 | Shop 9, Floor 2, 69 Kloof Street, Green Point, Cape Town | business_name_present
+Hair Hair & Beauty 00013 | Shop 15, Floor 3, 161 Lower Main Road, Khayelitsha, Cape Tow | business_name_present
+Hair Hair & Beauty 00057 | Shop 11, Floor 1, 122 Main Road, Stellenbosch, Cape Town | business_name_present
+Kapsalon Hair 00055 | Shop 30, Floor 1, 297 Main Road, Muizenberg, Cape Town | no_fake_prices
+Mooi Hair & Beauty 00058 | Shop 2, Floor 2, 23 Regent Road, Muizenberg, Cape Town | business_name_present
+Observatory Hair 00039 | Shop 30, Floor 1, 196 R44, Muizenberg, Cape Town | no_fake_prices
+Salon Hair & Beauty 00030 | Shop 32, Floor 1, 178 Main Road, Sea Point, Cape Town | business_name_present
+Salon Hair 00046 | Shop 21, Floor 3, 276 Long Street, Mitchells Plain, Cape Tow | no_fake_prices
+Studio Hair & Beauty 00054 | Shop 10, Floor 3, 370 Regent Road, Muizenberg, Cape Town | business_name_present
+Table Mountain Hair & Beauty 00001 | Shop 29, Floor 3, 68 Long Street, Stellenbosch, Cape Town | business_name_present
+Urban Hair 00003 | Shop 2, Floor 2, 132 Long Street, Gardens, Cape Town | no_fake_prices
+(17 rows)

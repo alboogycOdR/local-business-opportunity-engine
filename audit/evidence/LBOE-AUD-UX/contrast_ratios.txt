@@ -1,0 +1,10 @@
+muted text on paper (breadcrumb, .table-sub, captions)  #6d7788 on #f5f6f1: 4.16:1  PASS(large only) AA-normal
+muted text on card                                      #6d7788 on #ffffff: 4.52:1  PASS AA-normal
+blue link (.muted a) on paper                           #5672e8 on #f5f6f1: 3.89:1  PASS(large only) AA-normal
+coral eyebrow on paper                                  #ff795f on #f5f6f1: 2.37:1  FAIL AA-normal
+coral eyebrow on card                                   #ff795f on #ffffff: 2.58:1  FAIL AA-normal
+nav link on ink header                                  #cbd4e7 on #14213d: 10.73:1  PASS AA-normal
+badge text                                              #334875 on #edf0f8: 7.92:1  PASS AA-normal
+ink on lime safety banner                               #14213d on #d9f75b: 13.24:1  PASS AA-normal
+warning text                                            #853b2c on #fff0ea: 7.11:1  PASS AA-normal
+success text                                            #27613b on #edf8ef: 6.74:1  PASS AA-normal

@@ -1,0 +1,169 @@
+diff --git a/apps/api/src/lboe_api/main.py b/apps/api/src/lboe_api/main.py
+index 31ce8dd..9ab0727 100644
+--- a/apps/api/src/lboe_api/main.py
++++ b/apps/api/src/lboe_api/main.py
+@@ -15,7 +15,7 @@ from pathlib import Path
+ from typing import Any
+ 
+ from fastapi import Depends, FastAPI, HTTPException, Query, Request
+-from fastapi.responses import RedirectResponse
++from fastapi.responses import RedirectResponse, Response
+ from fastapi.staticfiles import StaticFiles
+ from lboe_domain import (
+     ALLOWED_TRANSITIONS,
+@@ -40,7 +40,7 @@ from lboe_maps_scraper import MapsScraperAdapter, MapsScraperError
+ from lboe_website_auditor import PlaywrightAuditAdapter
+ from pydantic import BaseModel, Field
+ from redis import Redis
+-from sqlalchemy import select, text
++from sqlalchemy import func, select, text
+ from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.orm import Session, sessionmaker
+ from starlette.middleware.base import BaseHTTPMiddleware
+@@ -119,6 +119,14 @@ from .reporting_service import build_pilot_report
+ from .scoring_service import execute_score, score_idempotency_key
+ 
+ logger = logging.getLogger("lboe.api")
++MIGRATIONS_DIR = Path(__file__).resolve().parents[4] / "infrastructure" / "database" / "migrations"
++
++
++def expected_migration() -> str | None:
++    """Latest migration shipped with this build, so status never drifts from the repo."""
++    files = sorted(MIGRATIONS_DIR.glob("[0-9][0-9][0-9][0-9]_*.sql"))
++    return files[-1].name if files else None
++
+ 
+ REVIEW_CHECKLIST = (
+     ("concept_banner_visible", "Concept banner visible"),
+@@ -318,7 +326,7 @@ def system_status(session: Session = Depends(db_session)) -> dict[str, Any]:
+         "status": "ok",
+         "environment": settings.environment,
+         "database": "ok",
+-        "migration": {"current": current_migration, "expected": "0019_delivery_projects.sql"},
++        "migration": {"current": current_migration, "expected": expected_migration()},
+         "storage": {
+             "backend": settings.storage_backend,
+             "artifact_root_writable": writable(settings.demo_artifact_root),
+@@ -411,12 +419,26 @@ async def discover_campaign(
+     return {"job_id": str(job.id), "status": job.status, "result": result}
+ 
+ 
+-def business_dict(business: Business, session: Session) -> dict[str, Any]:
+-    observations = session.scalars(select(SourceObservation).where(SourceObservation.business_id == business.id)).all()
+-    contacts = session.scalars(select(Contact).where(Contact.business_id == business.id)).all()
+-    external_identities = session.scalars(
+-        select(BusinessExternalIdentity).where(BusinessExternalIdentity.business_id == business.id)
+-    ).all()
++def business_dict(
++    business: Business,
++    session: Session,
++    *,
++    observations: list[SourceObservation] | None = None,
++    contacts: list[Contact] | None = None,
++    external_identities: list[BusinessExternalIdentity] | None = None,
++) -> dict[str, Any]:
++    if observations is None:
++        observations = list(
++            session.scalars(select(SourceObservation).where(SourceObservation.business_id == business.id)).all()
++        )
++    if contacts is None:
++        contacts = list(session.scalars(select(Contact).where(Contact.business_id == business.id)).all())
++    if external_identities is None:
++        external_identities = list(
++            session.scalars(
++                select(BusinessExternalIdentity).where(BusinessExternalIdentity.business_id == business.id)
++            ).all()
++        )
+     return {
+         "id": str(business.id),
+         "campaign_id": str(business.campaign_id),
+@@ -446,14 +468,50 @@ def business_dict(business: Business, session: Session) -> dict[str, Any]:
+     }
+ 
+ 
++def _group_by_business(rows: Any) -> dict[uuid.UUID, list[Any]]:
++    grouped: dict[uuid.UUID, list[Any]] = {}
++    for row in rows:
++        grouped.setdefault(row.business_id, []).append(row)
++    return grouped
++
++
+ @app.get("/v1/businesses")
+ def list_businesses(
+-    campaign_id: uuid.UUID | None = Query(default=None), session: Session = Depends(db_session)
++    response: Response,
++    campaign_id: uuid.UUID | None = Query(default=None),
++    limit: int = Query(default=100, ge=1, le=500),
++    offset: int = Query(default=0, ge=0),
++    session: Session = Depends(db_session),
+ ) -> list[dict[str, Any]]:
+-    query = select(Business).order_by(Business.created_at)
+-    if campaign_id:
+-        query = query.where(Business.campaign_id == campaign_id)
+-    return [business_dict(item, session) for item in session.scalars(query).all()]
++    """Paginated business list; related rows are loaded in three batched queries."""
++    filters = [Business.campaign_id == campaign_id] if campaign_id else []
++    total = session.scalar(select(func.count()).select_from(Business).where(*filters)) or 0
++    businesses = session.scalars(
++        select(Business).where(*filters).order_by(Business.created_at, Business.id).limit(limit).offset(offset)
++    ).all()
++    ids = [item.id for item in businesses]
++    observations = _group_by_business(
++        session.scalars(select(SourceObservation).where(SourceObservation.business_id.in_(ids))).all() if ids else []
++    )
++    contacts = _group_by_business(
++        session.scalars(select(Contact).where(Contact.business_id.in_(ids))).all() if ids else []
++    )
++    identities = _group_by_business(
++        session.scalars(select(BusinessExternalIdentity).where(BusinessExternalIdentity.business_id.in_(ids))).all()
++        if ids
++        else []
++    )
++    response.headers["X-Total-Count"] = str(total)
++    return [
++        business_dict(
++            item,
++            session,
++            observations=observations.get(item.id, []),
++            contacts=contacts.get(item.id, []),
++            external_identities=identities.get(item.id, []),
++        )
++        for item in businesses
++    ]
+ 
+ 
+ @app.get("/v1/businesses/{business_id}")
+diff --git a/infrastructure/database/migrations/0020_orm_index_parity.sql b/infrastructure/database/migrations/0020_orm_index_parity.sql
+new file mode 100644
+index 0000000..36bc52f
+--- /dev/null
++++ b/infrastructure/database/migrations/0020_orm_index_parity.sql
+@@ -0,0 +1,28 @@
++-- Indexes declared on the ORM models (and therefore present in every test database created
++-- with metadata.create_all) that no earlier migration created. Without them PostgreSQL
++-- sequentially scans contacts, suppression_entries, businesses.identity_key/state and others
++-- on every per-business lookup in the operator UI, import dedupe, and queue pages.
++-- Idempotent: safe to re-run and safe on databases created with create_all.
++
++CREATE INDEX IF NOT EXISTS ix_businesses_identity_key ON businesses (identity_key);
++CREATE INDEX IF NOT EXISTS ix_businesses_state ON businesses (state);
++CREATE INDEX IF NOT EXISTS ix_business_aliases_business_id ON business_aliases (business_id);
++CREATE INDEX IF NOT EXISTS ix_contacts_business_id ON contacts (business_id);
++CREATE INDEX IF NOT EXISTS ix_suppression_entries_business_id ON suppression_entries (business_id);
++CREATE INDEX IF NOT EXISTS ix_audit_runs_status ON audit_runs (status);
++CREATE INDEX IF NOT EXISTS ix_audit_runs_website_id ON audit_runs (website_id);
++CREATE INDEX IF NOT EXISTS ix_opportunity_scores_audit_run_id ON opportunity_scores (audit_run_id);
++CREATE INDEX IF NOT EXISTS ix_business_briefs_audit_run_id ON business_briefs (audit_run_id);
++CREATE INDEX IF NOT EXISTS ix_business_briefs_score_id ON business_briefs (score_id);
++CREATE INDEX IF NOT EXISTS ix_generated_demos_audit_run_id ON generated_demos (audit_run_id);
++CREATE INDEX IF NOT EXISTS ix_generated_demos_score_id ON generated_demos (score_id);
++CREATE INDEX IF NOT EXISTS ix_generated_demos_status ON generated_demos (status);
++CREATE INDEX IF NOT EXISTS ix_outreach_draft_packages_brief_id ON outreach_draft_packages (brief_id);
++CREATE INDEX IF NOT EXISTS ix_outreach_draft_packages_score_id ON outreach_draft_packages (score_id);
++CREATE INDEX IF NOT EXISTS ix_outreach_draft_packages_status ON outreach_draft_packages (status);
++CREATE INDEX IF NOT EXISTS ix_outreach_channel_approvals_outreach_draft_message_id ON outreach_channel_approvals (outreach_draft_message_id);
++CREATE INDEX IF NOT EXISTS ix_proposal_packages_status ON proposal_packages (status);
++CREATE INDEX IF NOT EXISTS ix_proposal_assumptions_proposal_id ON proposal_assumptions (proposal_id);
++CREATE INDEX IF NOT EXISTS ix_delivery_projects_status ON delivery_projects (status);
++CREATE INDEX IF NOT EXISTS ix_operator_comments_operator_id ON operator_comments (operator_id);
++CREATE INDEX IF NOT EXISTS ix_demo_preview_links_business_id ON demo_preview_links (business_id);

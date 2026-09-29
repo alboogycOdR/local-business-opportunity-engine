@@ -1,0 +1,2 @@
+code=baseline requests=200 concurrency=1 | load run exceeded 200s | API afterwards=200 | idle-in-transaction=5
+code=baseline requests=200 concurrency=2 | load run exceeded 200s | API afterwards=500 | idle-in-transaction=15

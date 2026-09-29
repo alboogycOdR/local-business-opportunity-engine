@@ -1,0 +1,7 @@
+POST /ui/demos/9fa008e2-bd08-4063-abc1-a6e8d459ba… -> {"detail":"demo_not_shareable"} [HTTP 409 application/json]
+POST /ui/proposals/4b84d528-0a41-4dcb-98a2-03db46… -> {"detail":"proposal_review_required"} [HTTP 422 application/json]
+POST /ui/pilots… -> {"detail":[{"type":"missing","loc":["body","name"],"msg":"Field required","input":null}]} [HTTP 422 application/json]
+POST /ui/bulk… -> {"detail":"unsupported_bulk_action"} [HTTP 422 application/json]
+GET /ui/businesses/00000000-0000-0000-0000-00000… -> {"detail":"business_not_found"} [HTTP 404 application/json]
+GET /ui/queues/nope… -> {"detail":"queue_not_found"} [HTTP 404 application/json]
+POST /ui/businesses/00000000-0000-0000-0000-00000… -> Internal Server Error [HTTP 500 text/plain; charset=utf-8]
