@@ -664,7 +664,7 @@ index b238a15..0979af5 100644
      return ("passed" if all(checks.values()) else "failed", checks)
  
 diff --git a/apps/api/src/lboe_api/main.py b/apps/api/src/lboe_api/main.py
-index 31ce8dd..b2de15a 100644
+index 31ce8dd..774bbe0 100644
 --- a/apps/api/src/lboe_api/main.py
 +++ b/apps/api/src/lboe_api/main.py
 @@ -15,7 +15,7 @@ from pathlib import Path
@@ -798,7 +798,20 @@ index 31ce8dd..b2de15a 100644
  
  
  @app.get("/v1/businesses/{business_id}")
-@@ -2822,6 +2880,15 @@ def list_proposal_exports(proposal_id: uuid.UUID, session: Session = Depends(db_
+@@ -2340,6 +2398,12 @@ def suppress_business(
+         raise HTTPException(status_code=404, detail="business_not_found")
+     entry = SuppressionEntry(business_id=business.id, reason=request.reason, channel=request.channel)
+     session.add(entry)
++    for link in session.scalars(
++        select(DemoPreviewLink).where(DemoPreviewLink.business_id == business.id, DemoPreviewLink.status == "active")
++    ).all():
++        # Suppression withdraws concept previews already shared with the business.
++        link.status = "revoked"
++        link.revoked_at = datetime.now(UTC)
+     current = LeadState(business.state)
+     if current != LeadState.SUPPRESSED and LeadState.SUPPRESSED in ALLOWED_TRANSITIONS.get(current, frozenset()):
+         business.state = LeadState.SUPPRESSED.value
+@@ -2822,6 +2886,15 @@ def list_proposal_exports(proposal_id: uuid.UUID, session: Session = Depends(db_
      ]
  
  
@@ -1333,7 +1346,7 @@ index 0000000..d53e52e
 +    response.status_code = 422
 +    return response
 diff --git a/apps/api/src/lboe_api/ui/routes.py b/apps/api/src/lboe_api/ui/routes.py
-index 6727e0e..85b217c 100644
+index 6727e0e..1dcffda 100644
 --- a/apps/api/src/lboe_api/ui/routes.py
 +++ b/apps/api/src/lboe_api/ui/routes.py
 @@ -6,15 +6,15 @@ import hmac
@@ -2110,7 +2123,15 @@ index 6727e0e..85b217c 100644
      operator = db.scalar(select(Operator).where(Operator.active.is_(True)).order_by(Operator.created_at))
      if operator is None:
          operator = Operator(display_name="local-operator", role="owner")
-@@ -1243,7 +1467,7 @@ def queues(db: Session = Depends(session)) -> HTMLResponse:
+@@ -1179,6 +1403,7 @@ def suppress(business_id: uuid.UUID, reason: str = Form(...), db: Session = Depe
+     if business.state != "SUPPRESSED":
+         business.state = "SUPPRESSED"
+     db.add(SuppressionEntry(business_id=business_id, reason=reason))
++    revoke_share_links(db, business_id)
+     db.add(
+         OperatorAuditEvent(
+             business_id=business_id,
+@@ -1243,7 +1468,7 @@ def queues(db: Session = Depends(session)) -> HTMLResponse:
      body = (
          "<div class='queue-grid'>"
          + "".join(
@@ -2119,7 +2140,7 @@ index 6727e0e..85b217c 100644
              for slug, label, query in links
          )
          + "</div>"
-@@ -1267,7 +1491,7 @@ def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLRespons
+@@ -1267,7 +1492,7 @@ def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLRespons
          return proposal_ready_queue(db)
      if queue_name == "delivery":
          return delivery_queue(db)
@@ -2128,7 +2149,7 @@ index 6727e0e..85b217c 100644
          "demo-review": (
              "Demo review",
              select(GeneratedDemo).where(GeneratedDemo.status.in_(["qa_passed", "review_pending"])),
-@@ -1290,13 +1514,14 @@ def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLRespons
+@@ -1290,13 +1515,14 @@ def queue_detail(queue_name: str, db: Session = Depends(session)) -> HTMLRespons
      if queue_name not in mapping:
          raise HTTPException(404, "queue_not_found")
      title, query = mapping[queue_name]
@@ -2149,7 +2170,7 @@ index 6727e0e..85b217c 100644
          rows.append(
              f"<li><a href='/ui/businesses/{business_id}'>{esc(business.display_name if business else business_id)}</a></li>"
          )
-@@ -1331,27 +1556,22 @@ def no_website_queue(db: Session) -> HTMLResponse:
+@@ -1331,27 +1557,22 @@ def no_website_queue(db: Session) -> HTMLResponse:
      ).all()
      rows: list[str] = []
      seen: set[tuple[str, str | None]] = set()
@@ -2183,7 +2204,7 @@ index 6727e0e..85b217c 100644
          + ("".join(rows) or "<tr><td colspan='5'>No active businesses without a website were found.</td></tr>")
          + "</table>"
      )
-@@ -1367,17 +1587,13 @@ def no_website_queue(db: Session) -> HTMLResponse:
+@@ -1367,17 +1588,13 @@ def no_website_queue(db: Session) -> HTMLResponse:
  @router.get("/ui/queues/no-demo-reason", response_class=HTMLResponse)
  def no_demo_reason_queue(db: Session = Depends(session)) -> HTMLResponse:
      items = []
@@ -2208,7 +2229,7 @@ index 6727e0e..85b217c 100644
          if score and demo is None:
              items.append((business, score.recommended_next_action, "audit, manual review, or score-only follow-up"))
      return _reason_queue("Why no demo", items)
-@@ -1386,10 +1602,17 @@ def no_demo_reason_queue(db: Session = Depends(session)) -> HTMLResponse:
+@@ -1386,10 +1603,17 @@ def no_demo_reason_queue(db: Session = Depends(session)) -> HTMLResponse:
  @router.get("/ui/queues/qa-failed", response_class=HTMLResponse)
  def qa_failed_queue(db: Session = Depends(session)) -> HTMLResponse:
      items = []
@@ -2229,7 +2250,7 @@ index 6727e0e..85b217c 100644
              failed = (
                  ", ".join(str(k) for k, v in (qa.checks if qa else {}).items() if v is False)
                  or "QA failed; inspect stored checks"
-@@ -1412,12 +1635,10 @@ def not_outreach_ready_queue(db: Session = Depends(session)) -> HTMLResponse:
+@@ -1412,12 +1636,10 @@ def not_outreach_ready_queue(db: Session = Depends(session)) -> HTMLResponse:
  @router.get("/ui/queues/weak-evidence", response_class=HTMLResponse)
  def weak_evidence_queue(db: Session = Depends(session)) -> HTMLResponse:
      items = []
@@ -2246,7 +2267,7 @@ index 6727e0e..85b217c 100644
          if score and score.recommended_next_action in {"manual_review", "audit_required", "score_only"}:
              items.append((business, score.recommended_next_action, "verify business-owned evidence before any demo"))
      return _reason_queue("Weak evidence", items)
-@@ -1464,7 +1685,7 @@ def operators(db: Session = Depends(session)) -> HTMLResponse:
+@@ -1464,7 +1686,7 @@ def operators(db: Session = Depends(session)) -> HTMLResponse:
          f"<tr><td>{esc(op.display_name)}</td><td>{esc(op.role)}</td><td>{'active' if op.active else 'inactive'}</td></tr>"
          for op in db.scalars(select(Operator).order_by(Operator.display_name)).all()
      )
@@ -2255,7 +2276,7 @@ index 6727e0e..85b217c 100644
      return page(
          "Operators",
          f"<table><tr><th>Name</th><th>Role</th><th>Status</th></tr>{rows}</table>{form}<p>Local trusted operator mode. No external authentication is configured.</p>",
-@@ -1490,7 +1711,7 @@ def select_operator(db: Session = Depends(session)) -> HTMLResponse:
+@@ -1490,7 +1712,7 @@ def select_operator(db: Session = Depends(session)) -> HTMLResponse:
      )
      return page(
          "Select operator",
@@ -2264,7 +2285,7 @@ index 6727e0e..85b217c 100644
      )
  
  
-@@ -1512,9 +1733,10 @@ def my_queue(request: Request, db: Session = Depends(session)) -> Response:
+@@ -1512,9 +1734,10 @@ def my_queue(request: Request, db: Session = Depends(session)) -> Response:
              OperatorAssignment.status.in_(["assigned", "in_progress"]),
          )
      ).all()
@@ -2276,7 +2297,25 @@ index 6727e0e..85b217c 100644
              for assignment in assignments
          )
          or "<li>No assigned leads</li>"
-@@ -1533,16 +1755,42 @@ def safe_demo_path(demo: GeneratedDemo, db: Session) -> Path:
+@@ -1522,6 +1745,17 @@ def my_queue(request: Request, db: Session = Depends(session)) -> Response:
+     return page("My queue", f"<ul>{rows}</ul>")
+ 
+ 
++def revoke_share_links(db: Session, business_id: uuid.UUID) -> int:
++    """Revoke every active concept-preview link for a business (used on suppression)."""
++    links = db.scalars(
++        select(DemoPreviewLink).where(DemoPreviewLink.business_id == business_id, DemoPreviewLink.status == "active")
++    ).all()
++    for link in links:
++        link.status = "revoked"
++        link.revoked_at = datetime.now(UTC)
++    return len(links)
++
++
+ def safe_demo_path(demo: GeneratedDemo, db: Session) -> Path:
+     artifact = db.scalar(select(DemoArtifact).where(DemoArtifact.demo_id == demo.id, DemoArtifact.kind == "index"))
+     if artifact is None:
+@@ -1533,16 +1767,42 @@ def safe_demo_path(demo: GeneratedDemo, db: Session) -> Path:
      return path
  
  
@@ -2324,7 +2363,7 @@ index 6727e0e..85b217c 100644
  
  
  @router.get("/ui/artifacts/demo/{demo_id}/index", response_class=HTMLResponse)
-@@ -1591,14 +1839,20 @@ def preview_links(demo_id: uuid.UUID, db: Session = Depends(session)) -> HTMLRes
+@@ -1591,14 +1851,20 @@ def preview_links(demo_id: uuid.UUID, db: Session = Depends(session)) -> HTMLRes
      ).all()
      rows = (
          "".join(
@@ -2347,9 +2386,22 @@ index 6727e0e..85b217c 100644
      return page("Preview links", form + f"<ul>{rows}</ul>")
  
  
-@@ -1655,13 +1909,10 @@ def external_preview(token: str, request: Request, db: Session = Depends(session
+@@ -1654,14 +1920,23 @@ def external_preview(token: str, request: Request, db: Session = Depends(session
+     demo = db.get(GeneratedDemo, link.demo_id)
      if demo is None:
          raise HTTPException(404, "demo_not_found")
++    business = db.get(Business, demo.business_id)
++    withdrawn = (
++        business is None
++        or business.state == "SUPPRESSED"
++        or db.scalar(select(SuppressionEntry.id).where(SuppressionEntry.business_id == demo.business_id)) is not None
++        or demo.status not in {"qa_passed", "approved"}
++    )
++    if withdrawn:
++        # A suppression or a failed/rejected review withdraws every link issued earlier.
++        db.add(DemoPreviewAccessEvent(preview_link_id=link.id, outcome="blocked", event_metadata={"external": True}))
++        db.commit()
++        raise HTTPException(410, "preview_expired_or_revoked")
      try:
 -        path = safe_demo_path(demo, db)
 -        content = path.read_text(encoding="utf-8")
@@ -2363,7 +2415,7 @@ index 6727e0e..85b217c 100644
      except HTTPException:
          db.add(DemoPreviewAccessEvent(preview_link_id=link.id, outcome="blocked", event_metadata={"external": True}))
          db.commit()
-@@ -1863,7 +2114,7 @@ def pilot_readiness(pilot_id: uuid.UUID, db: Session = Depends(session)) -> HTML
+@@ -1863,7 +2138,7 @@ def pilot_readiness(pilot_id: uuid.UUID, db: Session = Depends(session)) -> HTML
          f"<tr><td>{esc(c['label'])}</td><td>{c['result']}</td><td>{'required' if c['required'] else 'informational'}</td></tr>"
          for c in summary["checks"]
      )
@@ -2372,7 +2424,7 @@ index 6727e0e..85b217c 100644
      guidance = {
          "operator_available": (
              "No active operator is configured.",
-@@ -2101,7 +2352,7 @@ def proposal_review_page(proposal_id: uuid.UUID, db: Session = Depends(session))
+@@ -2101,7 +2376,7 @@ def proposal_review_page(proposal_id: uuid.UUID, db: Session = Depends(session))
          raise HTTPException(status_code=404, detail="proposal_not_found")
      return page(
          "Review proposal",
@@ -2381,7 +2433,7 @@ index 6727e0e..85b217c 100644
      )
  
  
-@@ -2143,8 +2394,10 @@ def proposal_ready_queue(db: Session = Depends(session)) -> HTMLResponse:
+@@ -2143,8 +2418,10 @@ def proposal_ready_queue(db: Session = Depends(session)) -> HTMLResponse:
          .where(ProposalPackage.status.in_(["draft", "changes_requested"]))
          .order_by(ProposalPackage.created_at)
      ).all()

@@ -73,19 +73,20 @@ cd audit/evidence/ui && ../../../.venv-audit/bin/python ../../lab/ui_audit.py \
 ## 4. Verify the fixes
 
 ```bash
-# Baseline: 43 of 46 audit tests fail (the 3 passes guard pages that already label their inputs)
+# Baseline: 40 of 43 audit tests fail (the 3 passes guard pages that already label their inputs)
 .venv-audit/bin/pytest -c audit/tests/pytest.ini audit/tests
 
 # Patched checkout
 git worktree add --detach /tmp/lboe-patched cc56bda
 cd /tmp/lboe-patched
 for p in 101-ui-session-leak 104-105-pagination-and-index-parity 103-report-scoping \
-         102-ui-n-plus-one 110-121-ux-accessibility-workflow; do
+         102-ui-n-plus-one 110-121-ux-accessibility-workflow 122-dashboard-metrics \
+         123-stage-aware-next-step 131-suppression-withdraws-share-links; do
   git apply /path/to/repo/audit/patches/LBOE-AUD-$p.patch
 done
 cd - && LBOE_AUDIT_TARGET=/tmp/lboe-patched .venv-audit/bin/pytest -c audit/tests/pytest.ini audit/tests   # all pass
 (cd /tmp/lboe-patched && ../path/.venv-audit/bin/pytest && ../path/.venv-audit/bin/mypy apps packages tests)
 ```
 
-Results recorded for this pass: patched checkout — audit suite **all pass**, repository suite **57 passed**,
+Results recorded for this pass: patched checkout — audit suite **43/43 pass**, repository suite **57 passed**,
 `mypy` **0 errors** (baseline: 4), `ruff check` / `ruff format --check` clean.

@@ -180,15 +180,15 @@ def test_LBOE_AUD_121_review_prompt_does_not_call_unreviewed_demos_approved(clie
 
 
 def _preview(client: Any, seed: Any) -> Any:
-    _business_id, demo = _no_website_demo(seed)
+    business_id, demo = _no_website_demo(seed)
     html = client.post(f"/ui/demos/{demo['id']}/preview-links", data={"label": "audit", "expires_days": "7"}).text
     token_path = re.search(r"/preview/[A-Za-z0-9_-]+", html)
     assert token_path, html[:300]
-    return client.get(token_path.group(0)), token_path.group(0)
+    return client.get(token_path.group(0)), token_path.group(0), business_id
 
 
 def test_LBOE_AUD_112_prospect_preview_is_styled(client: Any, seed: Any) -> None:
-    response, path = _preview(client, seed)
+    response, path, _business = _preview(client, seed)
     soup = BeautifulSoup(response.text, "html.parser")
     if soup.find("style"):
         return
@@ -199,7 +199,7 @@ def test_LBOE_AUD_112_prospect_preview_is_styled(client: Any, seed: Any) -> None
 
 
 def test_LBOE_AUD_112_prospect_preview_is_not_indexable_or_cached(client: Any, seed: Any) -> None:
-    response, _path = _preview(client, seed)
+    response, _path, _business = _preview(client, seed)
     soup = BeautifulSoup(response.text, "html.parser")
     meta = soup.find("meta", attrs={"name": "robots"})
     robots = (response.headers.get("x-robots-tag", "") + " " + (meta.get("content", "") if meta else "")).lower()
@@ -209,7 +209,7 @@ def test_LBOE_AUD_112_prospect_preview_is_not_indexable_or_cached(client: Any, s
 
 
 def test_LBOE_AUD_112_prospect_preview_has_no_dead_placeholder_links(client: Any, seed: Any) -> None:
-    response, _path = _preview(client, seed)
+    response, _path, _business = _preview(client, seed)
     soup = BeautifulSoup(response.text, "html.parser")
     ids = {tag.get("id") for tag in soup.find_all(id=True)}
     dead = [a["href"] for a in soup.find_all("a", href=True) if a["href"].startswith("#") and a["href"][1:] not in ids]
@@ -417,3 +417,15 @@ def test_LBOE_AUD_123_recommended_step_follows_the_lifecycle_stage(client: Any, 
     assert "review" in text and "concept" in text, text
     assert hero.find("a", href="#workflow") is not None, "hero does not lead to the pending human decision"
     assert not hero.select("form input[name=action]"), "hero offers an automated action instead of the decision"
+
+
+@pytest.mark.parametrize("route", ["api", "ui"])
+def test_LBOE_AUD_131_suppression_withdraws_existing_share_links(client: Any, seed: Any, route: str) -> None:
+    response, path, demo_business = _preview(client, seed)
+    assert response.status_code == 200
+    if route == "api":
+        client.post(f"/v1/businesses/{demo_business}/suppressions", json={"reason": "owner opted out"})
+    else:
+        client.post(f"/ui/businesses/{demo_business}/suppress", data={"reason": "owner opted out"})
+    after = client.get(path)
+    assert after.status_code in {404, 410}, f"suppressed business's concept still served ({after.status_code})"

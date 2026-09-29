@@ -1,0 +1,1 @@
+Baseline behaviour (cc56bda): GET /preview/<token> -> 200 before suppression, 200 after POST /v1/businesses/<id>/suppressions (201).
