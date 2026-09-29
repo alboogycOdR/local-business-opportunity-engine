@@ -1,6 +1,6 @@
 """Build the before/after route-latency table in REPORT.md from route_profiler JSON files.
 
-    python audit/tools/perf_table.py            # prints Markdown
+python audit/tools/perf_table.py            # prints Markdown
 """
 
 from __future__ import annotations

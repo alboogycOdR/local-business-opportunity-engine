@@ -26,7 +26,7 @@ patches and verified in a separate checkout.
 | `lab/serve.sh`, `lab/restart.sh`, `lab/reset_db.sh` | Run any checkout (`APP_ROOT=`) against a scratch database |
 | `tools/schema_drift.py` | ORM metadata vs migrated PostgreSQL (tables, columns, nullability, FKs) |
 | `tools/report_golden.py`, `tools/cards_golden.py` | Before/after output equivalence for the performance rewrites |
-| `evidence/` | Raw outputs: `perf/`, `ui/` (baseline screenshots + axe), `ui-patched/`, `LBOE-AUD-UX/`, `tools/` |
+| `evidence/` | Raw outputs: `perf/`, `ui/` (baseline: 45 pages × 4 viewports + axe), `ui-patched/` (after patches: metrics for all 4 viewports, screenshots kept for desktop and mobile), `LBOE-AUD-UX/`, `tools/` |
 
 ## 2. Environment used
 

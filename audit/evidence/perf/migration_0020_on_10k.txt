@@ -1,0 +1,6 @@
+Applied 1 migration(s).
+- 0020_orm_index_parity.sql
+
+real	0m0.299s
+user	0m0.156s
+sys	0m0.034s
