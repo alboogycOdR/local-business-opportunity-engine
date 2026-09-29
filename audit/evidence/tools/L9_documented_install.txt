@@ -1,0 +1,98 @@
+Using Python 3.12.3 environment at: /tmp/claude-0/venv-clean
+Resolved 48 packages in 1.27s
+   Building lboe-bootstrap @ file:///home/user/local-business-opportunity-engine
+Downloading uvloop (4.2MiB)
+Downloading ruff (9.9MiB)
+Downloading playwright (46.0MiB)
+Downloading ast-serialize (1.3MiB)
+Downloading mypy (14.6MiB)
+Downloading sqlalchemy (4.5MiB)
+Downloading pydantic-core (2.0MiB)
+Downloading psycopg-binary (5.0MiB)
+Downloading pygments (1.2MiB)
+ Downloading pydantic-core
+ Downloading ast-serialize
+ Downloading uvloop
+ Downloading ruff
+ Downloading psycopg-binary
+ Downloading sqlalchemy
+ Downloading pygments
+ Downloading playwright
+ Downloading mypy
+  × Failed to build `lboe-bootstrap @
+  │ file:///home/user/local-business-opportunity-engine`
+  ├─▶ The build backend returned an error
+  ╰─▶ Call to `hatchling.build.build_editable` failed (exit status: 1)
+
+      [stderr]
+      Traceback (most recent call last):
+        File "<string>", line 11, in <module>
+        File
+      "/root/.cache/uv/builds-v0/.tmpxTA21F/lib/python3.12/site-packages/hatchling/build.py",
+      line 83, in build_editable
+          return os.path.basename(next(builder.build(directory=wheel_directory,
+      versions=["editable"])))
+      
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File
+      "/root/.cache/uv/builds-v0/.tmpxTA21F/lib/python3.12/site-packages/hatchling/builders/plugin/interface.py",
+      line 166, in build
+          artifact = version_api[version](directory, **build_data)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File
+      "/root/.cache/uv/builds-v0/.tmpxTA21F/lib/python3.12/site-packages/hatchling/builders/wheel.py",
+      line 547, in build_editable
+          return self.build_editable_detection(directory, **build_data)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File
+      "/root/.cache/uv/builds-v0/.tmpxTA21F/lib/python3.12/site-packages/hatchling/builders/wheel.py",
+      line 559, in build_editable_detection
+          for included_file in self.recurse_selected_project_files():
+        File
+      "/root/.cache/uv/builds-v0/.tmpxTA21F/lib/python3.12/site-packages/hatchling/builders/plugin/interface.py",
+      line 191, in recurse_selected_project_files
+          if self.config.only_include:
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+        File "/usr/lib/python3.12/functools.py", line 995, in __get__
+          val = self.func(instance)
+                ^^^^^^^^^^^^^^^^^^^
+        File
+      "/root/.cache/uv/builds-v0/.tmpxTA21F/lib/python3.12/site-packages/hatchling/builders/config.py",
+      line 715, in only_include
+          only_include = only_include_config.get("only-include",
+      self.default_only_include()) or self.packages
+      
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File
+      "/root/.cache/uv/builds-v0/.tmpxTA21F/lib/python3.12/site-packages/hatchling/builders/wheel.py",
+      line 293, in default_only_include
+          return self.default_file_selection_options.only_include
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "/usr/lib/python3.12/functools.py", line 995, in __get__
+          val = self.func(instance)
+                ^^^^^^^^^^^^^^^^^^^
+        File
+      "/root/.cache/uv/builds-v0/.tmpxTA21F/lib/python3.12/site-packages/hatchling/builders/wheel.py",
+      line 281, in default_file_selection_options
+          raise ValueError(message)
+      ValueError: Unable to determine which files to ship
+      inside the wheel using the following heuristics:
+      https://hatch.pypa.io/latest/plugins/builder/wheel/#default-file-selection
+
+      The most likely cause of this is that there is no directory that matches
+      the name of your project (lboe_bootstrap).
+
+      At least one file selection option must be defined
+      in the `tool.hatch.build.targets.wheel` table, see:
+      https://hatch.pypa.io/latest/config/build/
+
+      As an example, if you intend to ship a directory named `foo` that
+      resides within a `src` directory located at the root of your project,
+      you can define the following:
+
+      [tool.hatch.build.targets.wheel]
+      packages = ["src/foo"]
+
+      hint: This usually indicates a problem with the package or the build
+      environment.
+exit=1

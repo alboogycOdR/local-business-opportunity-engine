@@ -1,0 +1,22 @@
+Applied 19 migration(s).
+- 0001_initial.sql
+- 0002_discovery.sql
+- 0003_external_identity_candidates.sql
+- 0004_audit.sql
+- 0005_opportunity_scores.sql
+- 0006_business_briefs.sql
+- 0007_generated_demos.sql
+- 0008_demo_reviews.sql
+- 0009_outreach_drafts.sql
+- 0010_outreach_readiness.sql
+- 0011_outreach_execution.sql
+- 0012_lead_crm_events.sql
+- 0013_operator_ui.sql
+- 0014_pilot_operations.sql
+- 0015_enrichment.sql
+- 0016_manual_outreach_workflow.sql
+- 0017_security_artifacts.sql
+- 0018_proposals.sql
+- 0019_delivery_projects.sql
+--- second run
+Applied 0 migration(s).

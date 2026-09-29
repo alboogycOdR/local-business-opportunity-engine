@@ -1,0 +1,7 @@
+requirepass
+
+# Server
+redis_version:7.4.11
+redis_git_sha1:00000000
+redis_git_dirty:0
+redis_build_id:40ff01a501d8e4b6

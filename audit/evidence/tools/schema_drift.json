@@ -1,0 +1,262 @@
+{
+  "tables_only_in_orm": [],
+  "tables_only_in_migrations": [],
+  "column_drift": {},
+  "nullability_drift": {},
+  "unique_drift": {},
+  "fk_drift": {},
+  "index_counts": {
+    "audit_artifacts": {
+      "db": 1,
+      "orm": 1
+    },
+    "audit_findings": {
+      "db": 1,
+      "orm": 1
+    },
+    "audit_runs": {
+      "db": 1,
+      "orm": 3
+    },
+    "business_aliases": {
+      "db": 0,
+      "orm": 1
+    },
+    "business_brief_facts": {
+      "db": 1,
+      "orm": 1
+    },
+    "business_brief_opportunities": {
+      "db": 1,
+      "orm": 1
+    },
+    "business_brief_risks": {
+      "db": 1,
+      "orm": 1
+    },
+    "business_briefs": {
+      "db": 1,
+      "orm": 3
+    },
+    "business_external_identities": {
+      "db": 2,
+      "orm": 1
+    },
+    "businesses": {
+      "db": 5,
+      "orm": 6
+    },
+    "campaigns": {
+      "db": 0,
+      "orm": 0
+    },
+    "contacts": {
+      "db": 0,
+      "orm": 1
+    },
+    "dedupe_evidence": {
+      "db": 3,
+      "orm": 3
+    },
+    "delivery_approvals": {
+      "db": 1,
+      "orm": 1
+    },
+    "delivery_checklist_items": {
+      "db": 1,
+      "orm": 1
+    },
+    "delivery_exports": {
+      "db": 1,
+      "orm": 1
+    },
+    "delivery_milestones": {
+      "db": 1,
+      "orm": 1
+    },
+    "delivery_projects": {
+      "db": 1,
+      "orm": 2
+    },
+    "demo_artifacts": {
+      "db": 1,
+      "orm": 1
+    },
+    "demo_preview_access_events": {
+      "db": 1,
+      "orm": 1
+    },
+    "demo_preview_links": {
+      "db": 2,
+      "orm": 2
+    },
+    "demo_qa_runs": {
+      "db": 1,
+      "orm": 1
+    },
+    "demo_review_checklist_items": {
+      "db": 1,
+      "orm": 1
+    },
+    "demo_reviews": {
+      "db": 2,
+      "orm": 2
+    },
+    "discovery_candidates": {
+      "db": 3,
+      "orm": 2
+    },
+    "enrichment_facts": {
+      "db": 2,
+      "orm": 2
+    },
+    "enrichment_runs": {
+      "db": 1,
+      "orm": 1
+    },
+    "generated_demo_claims": {
+      "db": 1,
+      "orm": 1
+    },
+    "generated_demo_sections": {
+      "db": 1,
+      "orm": 1
+    },
+    "generated_demos": {
+      "db": 2,
+      "orm": 5
+    },
+    "jobs": {
+      "db": 1,
+      "orm": 0
+    },
+    "lead_crm_events": {
+      "db": 2,
+      "orm": 2
+    },
+    "manual_follow_up_tasks": {
+      "db": 1,
+      "orm": 1
+    },
+    "operator_assignments": {
+      "db": 2,
+      "orm": 2
+    },
+    "operator_audit_events": {
+      "db": 1,
+      "orm": 1
+    },
+    "operator_comments": {
+      "db": 1,
+      "orm": 2
+    },
+    "operator_sessions": {
+      "db": 1,
+      "orm": 1
+    },
+    "operators": {
+      "db": 0,
+      "orm": 0
+    },
+    "opportunity_components": {
+      "db": 1,
+      "orm": 1
+    },
+    "opportunity_holds": {
+      "db": 1,
+      "orm": 1
+    },
+    "opportunity_scores": {
+      "db": 1,
+      "orm": 2
+    },
+    "outreach_channel_approvals": {
+      "db": 1,
+      "orm": 2
+    },
+    "outreach_draft_checks": {
+      "db": 1,
+      "orm": 1
+    },
+    "outreach_draft_messages": {
+      "db": 1,
+      "orm": 1
+    },
+    "outreach_draft_packages": {
+      "db": 2,
+      "orm": 5
+    },
+    "outreach_execution_records": {
+      "db": 3,
+      "orm": 3
+    },
+    "outreach_objections": {
+      "db": 1,
+      "orm": 1
+    },
+    "outreach_readiness_checks": {
+      "db": 1,
+      "orm": 1
+    },
+    "outreach_readiness_reviews": {
+      "db": 2,
+      "orm": 2
+    },
+    "pilot_export_runs": {
+      "db": 1,
+      "orm": 1
+    },
+    "pilot_retrospectives": {
+      "db": 1,
+      "orm": 1
+    },
+    "pilot_runs": {
+      "db": 2,
+      "orm": 2
+    },
+    "pilot_source_policy_acknowledgements": {
+      "db": 1,
+      "orm": 1
+    },
+    "pipeline_events": {
+      "db": 1,
+      "orm": 1
+    },
+    "proposal_assumptions": {
+      "db": 0,
+      "orm": 1
+    },
+    "proposal_exports": {
+      "db": 1,
+      "orm": 1
+    },
+    "proposal_line_items": {
+      "db": 1,
+      "orm": 1
+    },
+    "proposal_packages": {
+      "db": 1,
+      "orm": 2
+    },
+    "proposal_review_events": {
+      "db": 1,
+      "orm": 1
+    },
+    "proposal_sections": {
+      "db": 1,
+      "orm": 1
+    },
+    "source_observations": {
+      "db": 1,
+      "orm": 1
+    },
+    "suppression_entries": {
+      "db": 0,
+      "orm": 1
+    },
+    "websites": {
+      "db": 1,
+      "orm": 1
+    }
+  }
+}
