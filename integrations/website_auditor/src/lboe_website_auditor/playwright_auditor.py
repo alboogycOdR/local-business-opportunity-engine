@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -16,8 +17,14 @@ from .resolver import WebsiteResolver
 class PlaywrightAuditAdapter:
     def __init__(self, artifact_root: str = "artifacts/audits", max_concurrency: int = 1) -> None:
         self.artifact_root = Path(artifact_root)
-        self.semaphore = asyncio.Semaphore(max(1, min(max_concurrency, 2)))
+        # One worker/container owns one Chromium process; preserve that cap even if
+        # a caller supplies a larger setting.
+        self.semaphore = asyncio.Semaphore(1)
         self.version = "sprint3-playwright-v1"
+
+    def artifact_directory(self, business_id: uuid.UUID, run_id: uuid.UUID) -> Path:
+        """Return a stable, isolated artifact directory for one audit invocation."""
+        return self.artifact_root / str(business_id) / str(run_id)
 
     async def audit(self, request: AuditRequest) -> AuditResult:
         if not request.website_url:
@@ -50,10 +57,14 @@ class PlaywrightAuditAdapter:
             ]
             if resolution.status != "healthy" or not resolution.final_url:
                 return AuditResult(website=resolution, findings=findings, auditor_version=self.version)
-            return await self._browser_audit(request, resolution, findings)
+            return await self._browser_audit(request, resolution, findings, run_id=uuid.uuid4())
 
     async def _browser_audit(
-        self, request: AuditRequest, resolution: WebsiteResolutionResult, findings: list[AuditFinding]
+        self,
+        request: AuditRequest,
+        resolution: WebsiteResolutionResult,
+        findings: list[AuditFinding],
+        run_id: uuid.UUID,
     ) -> AuditResult:
         resolution_result = resolution
         final_url = resolution_result.final_url
@@ -81,7 +92,7 @@ class PlaywrightAuditAdapter:
                     wait_until="domcontentloaded",
                     timeout=int(request.timeout_seconds * 1000),
                 )
-                out = self.artifact_root / str(request.business_id)
+                out = self.artifact_directory(request.business_id, run_id)
                 out.mkdir(parents=True, exist_ok=True)
                 desktop = out / "desktop-homepage.png"
                 await page.screenshot(path=str(desktop), full_page=True)
@@ -146,7 +157,11 @@ class PlaywrightAuditAdapter:
             website=resolution_result,
             findings=findings,
             artifacts=artifacts,
-            technical_metadata={"console_errors": len(console_errors), "failed_requests": len(failed_requests)},
+            technical_metadata={
+                "console_errors": len(console_errors),
+                "failed_requests": len(failed_requests),
+                "artifact_run_id": str(run_id),
+            },
             auditor_version=self.version,
         )
 
