@@ -971,7 +971,7 @@ def business_detail(
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='audit'><button class='button-primary'>Run website audit</button></form>"
     elif evidence_needs_refresh:
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='refresh_evidence'><button class='button-primary'>Refresh score and brief</button></form>"
-    elif website_contact and not enrichment_runs:
+    elif website_contact and score and brief and not enrichment_runs:
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='enrich'><button class='button-primary'>Run optional enrichment</button></form>"
     elif brief is None:
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='brief'><button class='button-primary'>Prepare business brief</button></form>"
