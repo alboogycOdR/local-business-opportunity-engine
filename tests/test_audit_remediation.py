@@ -13,6 +13,7 @@ from typing import Any
 import lboe_api.main as api
 import pytest
 from fastapi.testclient import TestClient
+from lboe_api.config import Settings, production_security_errors
 from lboe_api.db import Job, Operator, OperatorSession
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -40,6 +41,24 @@ def test_enabled_operator_auth_requires_bearer_for_versioned_api(monkeypatch: py
     assert denied.status_code == 401
     assert allowed.status_code == 404
     assert health.status_code == 200
+
+
+def test_production_security_configuration_fails_closed() -> None:
+    unsafe = Settings(environment="production")
+    errors = production_security_errors(unsafe)
+    assert len(errors) == 5
+    assert any("LBOE_AUTH_ENABLED" in error for error in errors)
+    assert any("LBOE_AUTH_SECRET" in error for error in errors)
+
+    safe = Settings(
+        environment="production",
+        auth_enabled=True,
+        operator_auth_token="t" * 32,
+        auth_secret="s" * 32,
+        secure_cookies=True,
+        csrf_enabled=True,
+    )
+    assert production_security_errors(safe) == []
 
 
 def test_enabled_ui_csrf_rejects_cross_origin_writes(monkeypatch: pytest.MonkeyPatch) -> None:

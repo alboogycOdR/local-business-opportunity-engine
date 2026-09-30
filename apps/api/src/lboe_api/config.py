@@ -3,6 +3,8 @@
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_AUTH_SECRET = "local-development-only-change-me"
+
 
 class Settings(BaseSettings):
     environment: str = "development"
@@ -24,7 +26,7 @@ class Settings(BaseSettings):
     demo_artifact_root: str = "artifacts"
     export_root: str = "exports"
     auth_enabled: bool = False
-    auth_secret: str = "local-development-only-change-me"
+    auth_secret: str = DEFAULT_AUTH_SECRET
     operator_auth_token: str = ""
     secure_cookies: bool = False
     csrf_enabled: bool = False
@@ -38,3 +40,21 @@ class Settings(BaseSettings):
     # Operator-facing times are rendered in this IANA zone (storage stays UTC).
     display_timezone: str = "Africa/Johannesburg"
     model_config = SettingsConfigDict(env_prefix="LBOE_", extra="ignore")
+
+
+def production_security_errors(settings: Settings) -> list[str]:
+    """Return fail-closed configuration errors for a production deployment."""
+    if settings.environment.casefold() not in {"production", "prod"}:
+        return []
+    errors: list[str] = []
+    if not settings.auth_enabled:
+        errors.append("LBOE_AUTH_ENABLED must be true")
+    if len(settings.operator_auth_token) < 32:
+        errors.append("LBOE_OPERATOR_AUTH_TOKEN must contain at least 32 characters")
+    if settings.auth_secret == DEFAULT_AUTH_SECRET or len(settings.auth_secret) < 32:
+        errors.append("LBOE_AUTH_SECRET must be a non-default value of at least 32 characters")
+    if not settings.secure_cookies:
+        errors.append("LBOE_SECURE_COOKIES must be true")
+    if not settings.csrf_enabled:
+        errors.append("LBOE_CSRF_ENABLED must be true")
+    return errors

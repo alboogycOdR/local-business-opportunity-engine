@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from lboe_api.audit_service import execute_audit
@@ -20,7 +22,7 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from .queue import GROUP, STREAM, decode_message
+from .queue import GROUP, STREAM, decode_message, reconcile_key
 
 logger = logging.getLogger("lboe.worker")
 Handler = Callable[[Session, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -37,12 +39,19 @@ class JobWorker:
         *,
         consumer: str = "worker-1",
         heartbeat_path: str | None = None,
+        reconcile_interval_seconds: float = 30.0,
+        reconcile_grace_seconds: float = 30.0,
+        reconcile_batch_size: int = 100,
     ) -> None:
         self.sessions = sessions
         self.redis = redis
         self.handlers = handlers
         self.consumer = consumer
         self.heartbeat_path = heartbeat_path
+        self.reconcile_interval_seconds = reconcile_interval_seconds
+        self.reconcile_grace_seconds = reconcile_grace_seconds
+        self.reconcile_batch_size = reconcile_batch_size
+        self._next_reconcile_at = 0.0
 
     async def ensure_group(self) -> None:
         try:
@@ -52,6 +61,7 @@ class JobWorker:
                 raise
 
     async def run_once(self, block_ms: int = 1000) -> bool:
+        await self._reconcile_if_due()
         rows = await self.redis.xreadgroup(GROUP, self.consumer, {STREAM: ">"}, count=1, block=block_ms)
         if not rows:
             self._touch_heartbeat()
@@ -68,6 +78,46 @@ class JobWorker:
                 await self.redis.xack(STREAM, GROUP, message_id)
                 self._touch_heartbeat()
         return True
+
+    async def _reconcile_if_due(self) -> None:
+        now = time.monotonic()
+        if now < self._next_reconcile_at:
+            return
+        self._next_reconcile_at = now + self.reconcile_interval_seconds
+        try:
+            await self.reconcile_queued_jobs()
+        except Exception:
+            # Queue recovery must not stop delivery of messages already in Redis.
+            logger.exception("queued_job_reconciliation_failed")
+
+    async def reconcile_queued_jobs(self) -> int:
+        """Republish aged durable jobs that may have missed their first Redis publish."""
+        cutoff = datetime.now(UTC) - timedelta(seconds=self.reconcile_grace_seconds)
+        with self.sessions() as session:
+            job_ids = session.scalars(
+                select(Job.id)
+                .where(Job.status == "queued", Job.created_at <= cutoff)
+                .order_by(Job.created_at)
+                .limit(self.reconcile_batch_size)
+            ).all()
+
+        published = 0
+        marker_ttl = max(60, int(self.reconcile_interval_seconds * 4))
+        for job_id in job_ids:
+            job_id_text = str(job_id)
+            marker = reconcile_key(job_id_text)
+            claimed = await self.redis.set(marker, "1", nx=True, ex=marker_ttl)
+            if not claimed:
+                continue
+            try:
+                await self.redis.xadd(STREAM, {"job_id": job_id_text})
+            except Exception:
+                await self.redis.delete(marker)
+                raise
+            published += 1
+        if published:
+            logger.info("queued_jobs_republished", extra={"count": published})
+        return published
 
     async def process(self, job_id: str) -> None:
         try:

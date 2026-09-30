@@ -46,7 +46,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from .audit_service import audit_idempotency_key
 from .brief_service import brief_idempotency_key, execute_brief
-from .config import Settings
+from .config import Settings, production_security_errors
 from .db import (
     AuditArtifact,
     AuditFinding,
@@ -170,6 +170,9 @@ def set_audit_adapter(adapter: Any) -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     configure_logging(settings.log_level)
+    security_errors = production_security_errors(settings)
+    if security_errors:
+        raise RuntimeError("unsafe production configuration: " + "; ".join(security_errors))
     if settings.auto_create_schema:
         Base.metadata.create_all(engine)
     logger.info("api_started")

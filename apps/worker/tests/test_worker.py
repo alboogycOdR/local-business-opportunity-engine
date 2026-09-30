@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Generator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -17,6 +18,8 @@ class FakeRedis:
     def __init__(self) -> None:
         self.acked: list[Any] = []
         self.messages: list[tuple[str, dict[bytes, bytes]]] = []
+        self.published: list[tuple[str, dict[str, str]]] = []
+        self.keys: set[str] = set()
 
     async def xreadgroup(self, *_args: Any, **_kwargs: Any) -> list[Any]:
         if not self.messages:
@@ -25,6 +28,21 @@ class FakeRedis:
 
     async def xack(self, _stream: str, _group: str, message_id: Any) -> None:
         self.acked.append(message_id)
+
+    async def set(self, key: str, _value: str, *, nx: bool, ex: int) -> bool:
+        assert nx is True
+        assert ex >= 60
+        if key in self.keys:
+            return False
+        self.keys.add(key)
+        return True
+
+    async def xadd(self, stream: str, fields: dict[str, str]) -> str:
+        self.published.append((stream, fields))
+        return "1-0"
+
+    async def delete(self, key: str) -> None:
+        self.keys.discard(key)
 
 
 @pytest.fixture
@@ -96,3 +114,22 @@ def test_queue_message_contains_only_job_identifier() -> None:
     assert decode_message({b"job_id": b"job-123"}) == "job-123"
     with pytest.raises(ValueError, match="queue_message_missing_job_id"):
         decode_message({b"payload": b"private prospect data"})
+
+
+def test_reconciler_republishes_only_aged_queued_jobs_once(sessions: sessionmaker[Session]) -> None:
+    aged = add_job(sessions)
+    fresh = add_job(sessions)
+    terminal = add_job(sessions)
+    with sessions() as session:
+        session.get(Job, aged.id).created_at = datetime.now(UTC) - timedelta(minutes=5)  # type: ignore[union-attr]
+        session.get(Job, terminal.id).created_at = datetime.now(UTC) - timedelta(minutes=5)  # type: ignore[union-attr]
+        session.get(Job, terminal.id).status = "succeeded"  # type: ignore[union-attr]
+        session.commit()
+
+    redis = FakeRedis()
+    worker = JobWorker(sessions, redis, {}, reconcile_grace_seconds=30)
+    assert asyncio.run(worker.reconcile_queued_jobs()) == 1
+    assert asyncio.run(worker.reconcile_queued_jobs()) == 0
+    assert redis.published == [("lboe:jobs:v1", {"job_id": str(aged.id)})]
+    assert str(fresh.id) not in str(redis.published)
+    assert str(terminal.id) not in str(redis.published)

@@ -6,17 +6,21 @@ import hashlib
 import json
 import re
 from datetime import UTC, datetime
+from urllib.parse import urljoin
 from uuid import UUID
 
 import httpx
 from bs4 import BeautifulSoup
 from lboe_domain import EnrichmentEvidence, EnrichmentFact, EnrichmentRequest, EnrichmentResult
+from lboe_website_auditor import SSRFBlocked, validate_public_url
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db import Business, Contact, EnrichmentFactRow, EnrichmentRun
 
 VERSION = "homepage-enrichment-v1"
+MAX_HOMEPAGE_BYTES = 2_000_000
+MAX_REDIRECTS = 8
 
 
 def enrichment_idempotency_key(request: EnrichmentRequest) -> str:
@@ -26,6 +30,43 @@ def enrichment_idempotency_key(request: EnrichmentRequest) -> str:
         "caller_key": request.idempotency_key,
     }
     return "enrich:" + hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+
+
+async def fetch_public_html(url: str, client: httpx.AsyncClient | None = None) -> tuple[str, str] | None:
+    """Fetch one bounded public HTML document, validating every redirect hop."""
+    current = validate_public_url(url)
+    visited = {current}
+    owned_client = client is None
+    active_client = client or httpx.AsyncClient(timeout=15, follow_redirects=False)
+    try:
+        for _ in range(MAX_REDIRECTS + 1):
+            async with active_client.stream("GET", current, headers={"User-Agent": "LBOE enrichment/1.0"}) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        return None
+                    target = validate_public_url(urljoin(current, location))
+                    if target in visited:
+                        return None
+                    visited.add(target)
+                    current = target
+                    continue
+                if not response.is_success or "text/html" not in response.headers.get("content-type", ""):
+                    return None
+                content_length = response.headers.get("content-length")
+                if content_length and int(content_length) > MAX_HOMEPAGE_BYTES:
+                    return None
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > MAX_HOMEPAGE_BYTES:
+                        return None
+                encoding = response.encoding or "utf-8"
+                return current, bytes(body).decode(encoding, errors="replace")
+        return None
+    finally:
+        if owned_client:
+            await active_client.aclose()
 
 
 def extract_homepage_facts(business_id: UUID, url: str, html: str) -> list[EnrichmentFact]:
@@ -170,11 +211,13 @@ async def execute_enrichment(session: Session, request: EnrichmentRequest) -> tu
     facts: list[EnrichmentFact] = []
     if url and re.match(r"^https?://", url, re.I):
         try:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-                response = await client.get(url, headers={"User-Agent": "LBOE enrichment/1.0"})
-            if response.is_success and "text/html" in response.headers.get("content-type", ""):
-                facts = extract_homepage_facts(request.business_id, str(response.url), response.text[:2_000_000])
-        except (httpx.HTTPError, UnicodeError):
+            document = await fetch_public_html(url)
+            if document is not None:
+                final_url, html = document
+                facts = extract_homepage_facts(request.business_id, final_url, html)
+            else:
+                run.status = "completed_with_warnings"
+        except (httpx.HTTPError, UnicodeError, SSRFBlocked, ValueError):
             run.status = "completed_with_warnings"
     for fact in facts:
         session.add(
