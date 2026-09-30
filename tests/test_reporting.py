@@ -14,6 +14,7 @@ from lboe_api.db import (
     make_engine,
 )
 from lboe_api.reporting_service import build_pilot_report
+from sqlalchemy import event, insert
 from sqlalchemy.orm import Session
 
 
@@ -154,3 +155,39 @@ def test_funnel_quality_workload_and_safety_metrics() -> None:
     assert quality["crm_event:reply_received"] == 1
     assert workload[("operator", "manual_outreach")] == 1
     assert report["details"]["transitions"]["REPLIED->MEETING"] == 1
+
+
+def test_large_report_aggregates_without_loading_business_entities() -> None:
+    session = _session()
+    campaign = Campaign(name="Large pilot", vertical="salon", geography="Cape Town")
+    session.add(campaign)
+    session.flush()
+    session.execute(
+        insert(Business),
+        [
+            {
+                "id": uuid.uuid4(),
+                "campaign_id": campaign.id,
+                "display_name": f"Synthetic Salon {index}",
+                "identity_key": f"synthetic-{index}",
+                "state": "DISCOVERED",
+            }
+            for index in range(10_000)
+        ],
+    )
+    session.commit()
+    loaded_entities = 0
+
+    def on_load(*_args: object) -> None:
+        nonlocal loaded_entities
+        loaded_entities += 1
+
+    event.listen(Session, "loaded_as_persistent", on_load)
+    try:
+        report = build_pilot_report(session, campaign_id=campaign.id)
+    finally:
+        event.remove(Session, "loaded_as_persistent", on_load)
+
+    funnel = {item["stage"]: item["count"] for item in report["funnel_metrics"]}
+    assert funnel["DISCOVERED"] == 10_000
+    assert loaded_entities == 0

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Generator
 from typing import Any
 
 import pytest
@@ -27,7 +28,7 @@ class FakeRedis:
 
 
 @pytest.fixture
-def sessions() -> sessionmaker[Session]:
+def sessions() -> Generator[sessionmaker[Session], None, None]:
     engine = make_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)

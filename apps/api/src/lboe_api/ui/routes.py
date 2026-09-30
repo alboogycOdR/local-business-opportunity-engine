@@ -68,7 +68,7 @@ from lboe_api.pilot_service import (
     pilot_for_business,
     readiness_summary,
 )
-from lboe_api.reporting_service import build_pilot_report
+from lboe_api.reporting_service import build_pilot_report, dashboard_metrics
 
 from .presentation import fmt_dt, state_label, status_label
 
@@ -590,7 +590,13 @@ def opportunity_cards_html(cards: list[dict[str, Any]]) -> str:
     return "<div class='opportunity-grid'>" + "".join(rendered) + "</div>"
 
 
-def map_panel(campaign: Any, businesses: Sequence[Business], db: Session | None = None) -> str:
+def map_panel(
+    campaign: Any,
+    businesses: Sequence[Business],
+    db: Session | None = None,
+    *,
+    total_businesses: int | None = None,
+) -> str:
     """Render a real Google Maps view with a safe local lead fallback."""
     geography = esc(getattr(campaign, "geography", None) or "Campaign area")
     query = (getattr(campaign, "geography", None) or "") + " " + (getattr(campaign, "vertical", None) or "")
@@ -644,11 +650,13 @@ def map_panel(campaign: Any, businesses: Sequence[Business], db: Session | None 
             marker_html = (
                 "<div class='map-data-note'>LBOE markers appear when business coordinates are available.</div>"
             )
+    total = total_businesses if total_businesses is not None else len(businesses)
+    count_label = f"{len(businesses)} of {total} businesses shown" if total > len(businesses) else f"{total} businesses"
     return (
         f"<div class='map-caption'><strong>Geographic view</strong><span class='muted'>Campaign area · {geography}</span></div>"
         f"<div class='map-shell map-local'><div class='map-overlay'>{marker_html}"
         f"<a class='button button-secondary map-open' href='{maps_url}' target='_blank' rel='noopener noreferrer'>Open Google Maps (opens Google)</a></div></div>"
-        f"<div class='map-leads'><div class='section-head'><div><h3>Leads in this area</h3><p class='muted'>Select a lead to see evidence and the next action.</p></div><span class='badge'>{len(businesses)} businesses</span></div><div class='map-lead-list'>{lead_links}</div></div>"
+        f"<div class='map-leads'><div class='section-head'><div><h3>Leads in this area</h3><p class='muted'>Select a lead to see evidence and the next action.</p></div><span class='badge'>{count_label}</span></div><div class='map-lead-list'>{lead_links}</div></div>"
     )
 
 
@@ -694,7 +702,7 @@ def next_action_panel(report: dict[str, Any]) -> str:
 
 @router.get("/ui", response_class=HTMLResponse)
 def dashboard(db: Session = Depends(session)) -> HTMLResponse:
-    report = build_pilot_report(db)
+    report = dashboard_metrics(db)
     quality = {item["code"]: item["count"] for item in report["quality_metrics"]}
     lead_counts: dict[uuid.UUID, int] = {
         campaign_id: int(count)
@@ -705,7 +713,9 @@ def dashboard(db: Session = Depends(session)) -> HTMLResponse:
     campaigns = db.scalars(select(Campaign).order_by(Campaign.created_at.desc())).all()
     campaign = max(campaigns, key=lambda item: (lead_counts.get(item.id, 0), item.created_at), default=None)
     campaign_businesses = (
-        db.scalars(select(Business).where(Business.campaign_id == campaign.id).order_by(Business.display_name)).all()
+        db.scalars(
+            select(Business).where(Business.campaign_id == campaign.id).order_by(Business.display_name).limit(50)
+        ).all()
         if campaign
         else []
     )
@@ -717,7 +727,7 @@ def dashboard(db: Session = Depends(session)) -> HTMLResponse:
         + "<section class='section'><div class='section-head'><div><div class='eyebrow'>Revenue focus</div><h2>Opportunity Cards</h2><p class='muted'>The clearest next actions from your current evidence.</p></div><a class='button button-secondary button-small' href='/ui/opportunities'>View all</a></div>"
         + opportunity_cards_html(opportunity_cards)
         + "</section>"
-        + f"<div class='layout-grid'><section class='section'><div class='section-head'><div><div class='eyebrow'>Geographic view</div><h2>{esc(campaign.name) if campaign else 'Your campaign map'}</h2></div><a class='button button-secondary' href='/ui/campaigns'>Manage campaigns</a></div>{map_panel(campaign, campaign_businesses, db) if campaign else map_panel(type('CampaignView', (), {'geography': 'Choose a geography', 'vertical': 'local business'})(), [], db)}</section><section class='section'><div class='eyebrow'>Today</div><h2>What needs attention</h2><div class='stat-line'><span>System delivery</span><strong>{quality.get('system_delivery_count', 0)}</strong></div><div class='stat-line'><span>Failed / blocked jobs</span><strong>{quality.get('jobs_failed', quality.get('jobs_failed_or_not_eligible', 0))}</strong></div><div class='stat-line'><span>Approved demos</span><strong>{quality.get('approved_demos', 0)}</strong></div><div class='stat-line'><span>Proposal-ready</span><strong>{quality.get('proposal_ready_queue_count', 0)}</strong></div><p class='muted'>Every action is operator-controlled. LBOE never sends messages.</p></section></div>"
+        + f"<div class='layout-grid'><section class='section'><div class='section-head'><div><div class='eyebrow'>Geographic view</div><h2>{esc(campaign.name) if campaign else 'Your campaign map'}</h2></div><a class='button button-secondary' href='/ui/campaigns'>Manage campaigns</a></div>{map_panel(campaign, campaign_businesses, db, total_businesses=lead_counts.get(campaign.id, 0)) if campaign else map_panel(type('CampaignView', (), {'geography': 'Choose a geography', 'vertical': 'local business'})(), [], db)}</section><section class='section'><div class='eyebrow'>Today</div><h2>What needs attention</h2><div class='stat-line'><span>System delivery</span><strong>{quality.get('system_delivery_count', 0)}</strong></div><div class='stat-line'><span>Failed / blocked jobs</span><strong>{quality.get('jobs_failed_or_not_eligible', 0)}</strong></div><div class='stat-line'><span>Approved demos</span><strong>{quality.get('approved_demos', 0)}</strong></div><div class='stat-line'><span>Proposal-ready</span><strong>{quality.get('proposal_ready_queue_count', 0)}</strong></div><p class='muted'>Every action is operator-controlled. LBOE never sends messages.</p></section></div>"
     )
     return page("Pilot dashboard", body)
 
@@ -931,7 +941,7 @@ def campaign_detail(
         discovery_notice
         + intro
         + discovery_form
-        + map_panel(campaign, shown, db)
+        + map_panel(campaign, shown, db, total_businesses=len(visible_businesses))
         + f"<section class='section'><div class='section-head'><h2>Lead list</h2><span class='badge'>{len(rows)} shown</span></div>{filters}{table}{pager}</section>",
     )
 
@@ -1143,6 +1153,10 @@ def business_detail(
     if pilot is not None:
         pilot_banner = f"<div class='notice'>{'DRY RUN pilot — this is a rehearsal. Do not contact businesses or record real outreach for it.' if pilot.mode == 'dry_run' else 'ACTIVE pilot — manual records represent real operator activity; LBOE still sends nothing.'} <a href='/ui/pilots/{pilot.id}'>View pilot</a></div>"
     next_action_button = ""
+    pending_review_demo = next(
+        (demo for demo in demos if demo.status in {"qa_passed", "review_pending"}),
+        None,
+    )
     if suppressed:
         action_title = "Suppressed — do not contact"
         action_reason = "No pipeline actions are available for a suppressed business."
@@ -1151,6 +1165,10 @@ def business_detail(
     # return ``brief_required`` from the API.
     if suppressed:
         pass
+    elif pending_review_demo is not None:
+        action_title = "Review the concept demo"
+        action_reason = "The concept passed QA and is waiting for your human review decision."
+        next_action_button = "<a class='button button-primary' href='#workflow'>Review concept</a>"
     elif raw_action == "audit_required" and latest_audit is None:
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='audit'><button class='button-primary'>Run website audit</button></form>"
     elif evidence_needs_refresh:

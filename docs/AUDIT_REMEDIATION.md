@@ -10,6 +10,7 @@ This document records the API/operator-console changes made from the audit at `c
 - Dry-run pilots block manual contact logs and CRM outcome writes at the API boundary. Active-pilot manual records remain operator assertions; LBOE does not deliver messages.
 - Discovery, website audit, and enrichment now create durable queued PostgreSQL jobs, then publish only `job_id` to `lboe:jobs:v1`. The consumer group and worker statuses follow `lboe-workers` and `queued → running → succeeded|failed`. A duplicate request returns the existing job ID; a still-queued row can be republished after Redis outage, while the worker's row lock/status guard prevents duplicate execution. `/v1/jobs/{job_id}` and the UI job page expose status, safe result, or safe error class.
 - `/health` now checks PostgreSQL with the configured bounded pool acquisition timeout. `/ready` retains PostgreSQL and Redis checks.
+- When `LBOE_AUTH_ENABLED=true`, `/v1/*` now requires `Authorization: Bearer $LBOE_OPERATOR_AUTH_TOKEN`; `/health` and `/ready` remain unauthenticated probes. Authenticated UI writes validate same-origin requests and the stored CSRF cookie hash when `LBOE_CSRF_ENABLED=true`.
 
 ## Worker artifacts and health integration
 
@@ -21,18 +22,21 @@ The repository Compose file does not define an API service. Deployment configura
 
 ## Residual work and acceptance notes
 
-- The audit's performance patch reported the campaign report scoping improvement, but the broader report aggregation rewrite is deferred: populated before/after golden equivalence data was unavailable. Do not treat the 10k-lead report residual as closed.
-- The audit's 43 regression tests were written against synchronous discovery/audit/enrichment responses. G4 intentionally changes those three endpoints to queued responses per the approved Redis worker contract. Such tests must be bridged by an owned test-only worker harness or updated acceptance assertions; production code must not execute those jobs inline just to satisfy the old synchronous assumptions.
+- Pilot report generation now uses grouped SQL queries and counts instead of materializing in-scope business and operational rows. A synthetic 10k-business test confirms zero business ORM objects are loaded. The audit's populated PostgreSQL before/after golden comparison remains outstanding; no prospect or production data was used for this work.
+- The audit's 43 regression tests were written against synchronous discovery/audit/enrichment responses. `tests/audit_inline_worker.py` is a test-only bridge for the deterministic offline audit adapter, leaving production endpoints queued. Run the audit tests with `-p audit_inline_worker` to validate downstream workflow states without Redis; queue behavior is separately covered by project tests.
 - Proposal and delivery workflow forms are available in the operator UI. Full inbox-style queue refinement and a broader Jinja autoescaping migration remain hardening work.
 - Operator identity is still a typed name in several decisions. This change does not add a new authentication/authorization model.
-- Audit security workstreams were not run. UX/performance audit results are not a security review or production-readiness sign-off.
+- The supplied audit covers UX/performance, not its other listed workstreams. API bearer gating and optional UI CSRF checks close the concrete access-control gaps found during this review, but a full security audit and threat-model pass are still needed before production exposure; this remediation is not a production-readiness sign-off.
 - Validate PostgreSQL migration/type parity separately using a disposable database; never apply audit migrations to a prospect or production database as part of this remediation.
 
 ## G4 validation record
 
-- Focused integration tests: `python -m pytest tests/test_audit_remediation.py tests/test_api_discovery.py tests/test_openapi.py -q` — **5 passed**.
-- Joined project tests: `python -m pytest tests` — **60 passed**.
+- Joined project tests: `python -m pytest tests` — **63 passed**, including the synthetic 10k-business aggregation check and auth/CSRF regressions.
+- Focused integration tests: `python -m pytest tests/test_audit_remediation.py tests/test_api_discovery.py tests/test_openapi.py -q` — **7 passed**.
 - Ruff check and format check: **passed**; `git diff --check`: **passed**.
-- Focused mypy over the changed API/UI modules and owned tests: **passed**. Full `mypy apps packages integrations tests` remains blocked by duplicate `conftest` module names in the pre-existing integration and worker test directories.
-- Audit regression suite, run against the joined checkout with `LBOE_AUDIT_TARGET` set: **28 passed, 15 failed**. The 15 failing seed-based UX/performance tests require synchronous discovery/audit/enrichment completion or data derived from it. The current endpoints correctly create queued jobs and return `503 job_queue_unavailable` when the audit fixture has no Redis/worker. The unchanged audit suite has no bridge to process those jobs. No production behavior was made synchronous to silence this fixture mismatch; the audit suite therefore remains partially red pending its asynchronous test harness/acceptance updates.
+- Full mypy: `mypy apps packages integrations tests` — **passed (74 source files)**. The mypy configuration excludes only the nested test `conftest.py` files that collide under the same top-level module name; worker and integration test modules remain checked.
+- Audit regression suite, run against the joined checkout using `LBOE_AUDIT_TARGET` and the owned test-only bridge in `tests/audit_inline_worker.py`: **43 passed**. Production job endpoints remain asynchronous; the deterministic offline adapter only runs inline inside this test plugin.
+- Pilot report aggregation is covered by reporting unit tests and the audit scope regression. A populated PostgreSQL before/after golden comparison is still outstanding, so performance equivalence on the audit's 10k dataset is not claimed.
+
+To rerun the unchanged audit pack from PowerShell, set `LBOE_AUDIT_TARGET` to this checkout, prepend its `tests` directory to `PYTHONPATH`, and run `python -m pytest -p audit_inline_worker -c <audit-root>/tests/pytest.ini <audit-root>/tests`. The pack remains unmodified in `audit/`.
 - `docker compose config`: passed. No G4 schema change was made, so G4 did not apply migrations. The G1 schema changes were verified separately against a disposable PostgreSQL database.

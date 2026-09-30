@@ -42,3 +42,6 @@ python_version = "3.12"
 strict = true
 warn_unused_configs = true
 mypy_path = "apps/api/src:packages/domain/src:packages/scoring/src:integrations/maps_scraper/src:integrations/website_auditor/src"
+# Pytest loads both conftest.py files, but mypy gives both the same top-level module name.
+# The worker test module itself remains type-checked; only its fixture module is skipped.
+exclude = "(^|/)(apps/worker|integrations/website_auditor)/tests/conftest.py$"

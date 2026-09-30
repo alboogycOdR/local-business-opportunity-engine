@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from lboe_domain import (
     ALLOWED_TRANSITIONS,
@@ -182,16 +182,24 @@ app.mount("/ui/static", StaticFiles(directory="apps/api/src/lboe_api/static"), n
 
 class InternalAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
-        if (
-            not settings.auth_enabled
-            or not request.url.path.startswith("/ui")
-            or request.url.path in {"/ui/login", "/ui/static/ui.css"}
-        ):
+        if not settings.auth_enabled:
             return await call_next(request)
-        token = request.cookies.get("lboe_session")
-        if not token:
+        if request.url.path.startswith("/v1/"):
+            scheme, _, api_token = request.headers.get("authorization", "").partition(" ")
+            expected = settings.operator_auth_token
+            if not expected or scheme.casefold() != "bearer" or not hmac.compare_digest(api_token, expected):
+                return JSONResponse(
+                    {"detail": "authentication_required"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            return await call_next(request)
+        if not request.url.path.startswith("/ui") or request.url.path in {"/ui/login", "/ui/static/ui.css"}:
+            return await call_next(request)
+        session_token = request.cookies.get("lboe_session")
+        if not session_token:
             return RedirectResponse("/ui/login", status_code=303)
-        session_hash = hmac.new(settings.auth_secret.encode(), token.encode(), hashlib.sha256).hexdigest()
+        session_hash = hmac.new(settings.auth_secret.encode(), session_token.encode(), hashlib.sha256).hexdigest()
         with SessionLocal() as db:
             valid = db.scalar(
                 select(OperatorSession).where(
@@ -202,6 +210,23 @@ class InternalAuthMiddleware(BaseHTTPMiddleware):
             )
         if valid is None:
             return RedirectResponse("/ui/login", status_code=303)
+        if settings.csrf_enabled and request.method not in {"GET", "HEAD", "OPTIONS", "TRACE"}:
+            from urllib.parse import urlsplit
+
+            origin = request.headers.get("origin")
+            if origin is None:
+                referer = request.headers.get("referer")
+                origin = f"{urlsplit(referer).scheme}://{urlsplit(referer).netloc}" if referer else None
+            origin_parts = urlsplit(origin) if origin else None
+            csrf_cookie = request.cookies.get("lboe_csrf", "")
+            if (
+                origin_parts is None
+                or origin_parts.scheme != request.url.scheme
+                or origin_parts.netloc != request.url.netloc
+                or not csrf_cookie
+                or not hmac.compare_digest(valid.csrf_hash, hashlib.sha256(csrf_cookie.encode()).hexdigest())
+            ):
+                return JSONResponse({"detail": "csrf_validation_failed"}, status_code=403)
         return await call_next(request)
 
 

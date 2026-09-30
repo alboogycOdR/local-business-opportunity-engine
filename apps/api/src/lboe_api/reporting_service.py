@@ -73,22 +73,6 @@ def _bounds(start_date: date | None, end_date: date | None) -> tuple[datetime | 
     return start, end
 
 
-_IN_CHUNK = 5000  # keep IN lists well below driver/parameter limits
-
-
-def _in(session: Session, model: Any, column: Any, values: set[Any]) -> list[Any]:
-    """Rows of ``model`` whose ``column`` is in ``values`` (chunked, SQL-side)."""
-    ordered = list(values)
-    rows: list[Any] = []
-    for start in range(0, len(ordered), _IN_CHUNK):
-        rows.extend(session.scalars(select(model).where(column.in_(ordered[start : start + _IN_CHUNK]))).all())
-    return rows
-
-
-def _scoped(session: Session, model: Any, business_ids: set[Any]) -> list[Any]:
-    return _in(session, model, model.business_id, business_ids)
-
-
 def _rate(numerator: int, denominator: int) -> float | None:
     return round(numerator / denominator, 4) if denominator else None
 
@@ -103,36 +87,72 @@ def build_pilot_report(
     include_details: bool = False,
 ) -> dict[str, Any]:
     start, end = _bounds(start_date, end_date)
-    campaigns = session.scalars(select(Campaign)).all()
-    campaign_map = {item.id: item for item in campaigns}
+    campaigns = session.execute(select(Campaign.id, Campaign.vertical))
+    campaign_map = {campaign_id: campaign_vertical for campaign_id, campaign_vertical in campaigns}
     if campaign_id is not None:
-        campaign = campaign_map.get(campaign_id)
-        if campaign is None:
+        if campaign_id not in campaign_map:
             raise ValueError("campaign_not_found")
         selected_campaign_ids = {campaign_id}
     else:
-        selected_campaign_ids = {item.id for item in campaigns if vertical is None or item.vertical == vertical}
-    # Scope every query in SQL. Rows are still window-filtered in Python so naive and
-    # aware timestamps are compared exactly as before (see _in_window).
+        selected_campaign_ids = {
+            item_id for item_id, item_vertical in campaign_map.items() if vertical is None or item_vertical == vertical
+        }
     campaign_ids = list(selected_campaign_ids)
-    businesses = [
-        item
-        for item in session.scalars(select(Business).where(Business.campaign_id.in_(campaign_ids))).all()
-        if _in_window(item.created_at, start, end)
-    ]
-    business_ids = {item.id for item in businesses}
-    report_vertical: str | None
-    if vertical is None and campaign_id is not None:
-        report_vertical = campaign_map[campaign_id].vertical
-    elif campaign_id is not None:
-        report_vertical = campaign_map[campaign_id].vertical
-    else:
-        report_vertical = vertical
+    business_scope = select(Business.id).where(Business.campaign_id.in_(campaign_ids))
+    if start is not None:
+        business_scope = business_scope.where(Business.created_at >= start)
+    if end is not None:
+        business_scope = business_scope.where(Business.created_at <= end)
+    business_ids = business_scope
 
-    events = [item for item in _scoped(session, PipelineEvent, business_ids) if _in_window(item.created_at, start, end)]
-    funnel_counts: dict[str, int] = {stage: sum(1 for item in businesses if item.state == stage) for stage in STAGES}
+    def within(column: Any) -> list[Any]:
+        clauses: list[Any] = []
+        if start is not None:
+            clauses.append(column >= start)
+        if end is not None:
+            clauses.append(column <= end)
+        return clauses
+
+    def total(query: Any) -> int:
+        return int(session.scalar(query) or 0)
+
+    def grouped(query: Any) -> dict[Any, int]:
+        return {key: int(value) for key, value in session.execute(query).all()}
+
+    def scoped(model: Any, timestamp: Any, *extra: Any) -> Any:
+        return (
+            select(model)
+            .join(Business, model.business_id == Business.id)
+            .where(Business.id.in_(business_ids), *within(timestamp), *extra)
+        )
+
+    def scoped_group(model: Any, timestamp: Any, key: Any, *extra: Any) -> dict[Any, int]:
+        return grouped(
+            select(key, func.count())
+            .select_from(model)
+            .join(Business, model.business_id == Business.id)
+            .where(Business.id.in_(business_ids), *within(timestamp), *extra)
+            .group_by(key)
+        )
+
+    business_count = total(select(func.count()).select_from(business_ids.subquery()))
+    funnel_counts = {stage: 0 for stage in STAGES}
+    funnel_counts.update(
+        grouped(
+            select(Business.state, func.count())
+            .where(Business.id.in_(business_ids), *within(Business.created_at))
+            .group_by(Business.state)
+        )
+    )
     funnel = [{"stage": stage, "count": funnel_counts[stage]} for stage in STAGES]
-    transitions = Counter(f"{item.from_state or 'NONE'}->{item.to_state}" for item in events)
+    transition_pairs = session.execute(
+        select(PipelineEvent.from_state, PipelineEvent.to_state, func.count())
+        .select_from(PipelineEvent)
+        .join(Business, PipelineEvent.business_id == Business.id)
+        .where(Business.id.in_(business_ids), *within(PipelineEvent.created_at))
+        .group_by(PipelineEvent.from_state, PipelineEvent.to_state)
+    ).all()
+    transitions = Counter({f"{before or 'NONE'}->{after}": int(count) for before, after, count in transition_pairs})
     transition_map = {
         "discovered_to_deduped": ("DISCOVERED->DEDUPED", "DISCOVERED"),
         "deduped_to_qualified": ("DEDUPED->QUALIFIED", "DEDUPED"),
@@ -151,154 +171,215 @@ def build_pilot_report(
         for code, (key, stage) in transition_map.items()
     ]
 
-    candidates = [
-        item
-        for item in session.scalars(
-            select(DiscoveryCandidate).where(DiscoveryCandidate.campaign_id.in_(campaign_ids))
-        ).all()
-        if _in_window(item.created_at, start, end)
-    ]
-    dedupe = [
-        item
-        for item in session.scalars(select(DedupeEvidence).where(DedupeEvidence.campaign_id.in_(campaign_ids))).all()
-        if _in_window(item.created_at, start, end)
-    ]
-    observations = [
-        item for item in _scoped(session, SourceObservation, business_ids) if _in_window(item.observed_at, start, end)
-    ]
-    identities = [
-        item
-        for item in _scoped(session, BusinessExternalIdentity, business_ids)
-        if _in_window(item.observed_at, start, end)
-    ]
-    audits = [item for item in _scoped(session, AuditRun, business_ids) if _in_window(item.started_at, start, end)]
-    websites = [item for item in _scoped(session, Website, business_ids) if _in_window(item.checked_at, start, end)]
-    audit_ids = {item.id for item in audits}
-    findings = [
-        item
-        for item in _in(session, AuditFinding, AuditFinding.audit_run_id, audit_ids)
-        if _in_window(item.observed_at, start, end)
-    ]
-    scores = [
-        item for item in _scoped(session, OpportunityScore, business_ids) if _in_window(item.created_at, start, end)
-    ]
-    demos = [item for item in _scoped(session, GeneratedDemo, business_ids) if _in_window(item.created_at, start, end)]
-    qa_runs = [
-        item
-        for item in _in(session, DemoQaRun, DemoQaRun.demo_id, {demo.id for demo in demos})
-        if _in_window(item.created_at, start, end)
-    ]
-    reviews = [item for item in _scoped(session, DemoReview, business_ids) if _in_window(item.created_at, start, end)]
-    packages = [
-        item for item in _scoped(session, OutreachDraftPackage, business_ids) if _in_window(item.created_at, start, end)
-    ]
-    readiness = [
-        item
-        for item in _scoped(session, OutreachReadinessReview, business_ids)
-        if _in_window(item.created_at, start, end)
-    ]
-    channel_approvals = _in(
-        session,
-        OutreachChannelApproval,
-        OutreachChannelApproval.outreach_readiness_review_id,
-        {review.id for review in readiness},
+    candidate_status = grouped(
+        select(DiscoveryCandidate.status, func.count())
+        .where(DiscoveryCandidate.campaign_id.in_(campaign_ids), *within(DiscoveryCandidate.created_at))
+        .group_by(DiscoveryCandidate.status)
     )
-    executions = [
-        item for item in _scoped(session, OutreachExecutionRecord, business_ids) if _in_window(item.sent_at, start, end)
-    ]
-    crm_events = [
-        item for item in _scoped(session, LeadCrmEvent, business_ids) if _in_window(item.occurred_at, start, end)
-    ]
-    proposals = [
-        item for item in _scoped(session, ProposalPackage, business_ids) if _in_window(item.created_at, start, end)
-    ]
-    proposal_exports = _in(session, ProposalExport, ProposalExport.proposal_id, {p.id for p in proposals})
-    suppressions = [
-        item for item in _scoped(session, SuppressionEntry, business_ids) if _in_window(item.created_at, start, end)
-    ]
-    brief_ids = {
-        item.id for item in _scoped(session, BusinessBrief, business_ids) if _in_window(item.created_at, start, end)
-    }
-    risks = _in(session, BusinessBriefRisk, BusinessBriefRisk.business_brief_id, brief_ids)
-    business_id_strings = {str(x) for x in business_ids}
-    # Only failed / not-eligible jobs are reported, so only those are loaded.
-    jobs = [
-        item
-        for item in session.scalars(select(Job).where(Job.status.in_(["failed", "not_eligible"]))).all()
-        if _in_window(item.created_at, start, end) and str(item.payload.get("business_id")) in business_id_strings
-    ]
+    duplicate_count = total(
+        select(func.count())
+        .select_from(DedupeEvidence)
+        .where(
+            DedupeEvidence.campaign_id.in_(campaign_ids),
+            DedupeEvidence.merged.is_(True),
+            *within(DedupeEvidence.created_at),
+        )
+    )
+    observation_count = total(
+        select(func.count())
+        .select_from(SourceObservation)
+        .join(Business, SourceObservation.business_id == Business.id)
+        .where(Business.id.in_(business_ids), *within(SourceObservation.observed_at))
+    )
+    identity_count = total(
+        select(func.count())
+        .select_from(BusinessExternalIdentity)
+        .join(Business, BusinessExternalIdentity.business_id == Business.id)
+        .where(Business.id.in_(business_ids), *within(BusinessExternalIdentity.observed_at))
+    )
+    audit_count = total(scoped(AuditRun, AuditRun.started_at).with_only_columns(func.count()))
+    audit_finding_counts = grouped(
+        select(AuditFinding.code, func.count())
+        .select_from(AuditFinding)
+        .join(AuditRun, AuditFinding.audit_run_id == AuditRun.id)
+        .join(Business, AuditRun.business_id == Business.id)
+        .where(
+            Business.id.in_(business_ids),
+            *within(AuditRun.started_at),
+            *within(AuditFinding.observed_at),
+        )
+        .group_by(AuditFinding.code)
+    )
+    score_bands = scoped_group(OpportunityScore, OpportunityScore.created_at, OpportunityScore.band)
+    score_actions = scoped_group(
+        OpportunityScore, OpportunityScore.created_at, OpportunityScore.recommended_next_action
+    )
+    average_score = session.scalar(
+        select(func.avg(OpportunityScore.score))
+        .select_from(OpportunityScore)
+        .join(Business, OpportunityScore.business_id == Business.id)
+        .where(Business.id.in_(business_ids), *within(OpportunityScore.created_at))
+    )
+    demo_statuses = scoped_group(GeneratedDemo, GeneratedDemo.created_at, GeneratedDemo.status)
+    qa_statuses = grouped(
+        select(DemoQaRun.status, func.count())
+        .select_from(DemoQaRun)
+        .join(GeneratedDemo, DemoQaRun.demo_id == GeneratedDemo.id)
+        .join(Business, GeneratedDemo.business_id == Business.id)
+        .where(
+            Business.id.in_(business_ids),
+            *within(GeneratedDemo.created_at),
+            *within(DemoQaRun.created_at),
+        )
+        .group_by(DemoQaRun.status)
+    )
+    package_statuses = scoped_group(OutreachDraftPackage, OutreachDraftPackage.created_at, OutreachDraftPackage.status)
+    review_count = total(
+        scoped(OutreachReadinessReview, OutreachReadinessReview.created_at).with_only_columns(func.count())
+    )
+    demo_reviewers = scoped_group(DemoReview, DemoReview.created_at, DemoReview.reviewer)
+    readiness_reviewers = scoped_group(
+        OutreachReadinessReview, OutreachReadinessReview.created_at, OutreachReadinessReview.reviewer
+    )
+    execution_operators = scoped_group(
+        OutreachExecutionRecord, OutreachExecutionRecord.sent_at, OutreachExecutionRecord.operator
+    )
+    crm_operators = scoped_group(LeadCrmEvent, LeadCrmEvent.occurred_at, LeadCrmEvent.operator)
+    approved_channels = grouped(
+        select(OutreachChannelApproval.channel, func.count())
+        .select_from(OutreachChannelApproval)
+        .join(
+            OutreachReadinessReview,
+            OutreachChannelApproval.outreach_readiness_review_id == OutreachReadinessReview.id,
+        )
+        .join(Business, OutreachReadinessReview.business_id == Business.id)
+        .where(
+            Business.id.in_(business_ids),
+            *within(OutreachReadinessReview.created_at),
+            OutreachChannelApproval.approved.is_(True),
+        )
+        .group_by(OutreachChannelApproval.channel)
+    )
+    execution_channels = scoped_group(
+        OutreachExecutionRecord, OutreachExecutionRecord.sent_at, OutreachExecutionRecord.channel
+    )
+    crm_types = scoped_group(LeadCrmEvent, LeadCrmEvent.occurred_at, LeadCrmEvent.event_type)
+    proposal_statuses = scoped_group(ProposalPackage, ProposalPackage.created_at, ProposalPackage.status)
+    proposal_scope = (
+        select(ProposalPackage.id)
+        .join(Business, ProposalPackage.business_id == Business.id)
+        .where(Business.id.in_(business_ids), *within(ProposalPackage.created_at))
+    )
+    export_count = total(
+        select(func.count()).select_from(ProposalExport).where(ProposalExport.proposal_id.in_(proposal_scope))
+    )
+    brief_scope = (
+        select(BusinessBrief.id)
+        .join(Business, BusinessBrief.business_id == Business.id)
+        .where(Business.id.in_(business_ids), *within(BusinessBrief.created_at))
+    )
+    brief_count = total(select(func.count()).select_from(brief_scope.subquery()))
+    risk_counts = grouped(
+        select(BusinessBriefRisk.code, func.count())
+        .where(BusinessBriefRisk.business_brief_id.in_(brief_scope))
+        .group_by(BusinessBriefRisk.code)
+    )
+    suppression_count = total(scoped(SuppressionEntry, SuppressionEntry.created_at).with_only_columns(func.count()))
+    missing_website_count = total(
+        select(func.count())
+        .select_from(Business)
+        .where(
+            Business.id.in_(business_ids),
+            ~select(Website.business_id)
+            .where(Website.business_id == Business.id, *within(Website.checked_at))
+            .exists(),
+        )
+    )
+    business_id_strings = sorted({str(value) for value in session.scalars(business_ids).all()})
+    job_counts: Counter[tuple[str, str]] = Counter()
+    for offset in range(0, len(business_id_strings), 5000):
+        job_counts.update(
+            {
+                (job_type, status): int(count)
+                for job_type, status, count in session.execute(
+                    select(Job.job_type, Job.status, func.count())
+                    .where(
+                        Job.status.in_(["failed", "not_eligible"]),
+                        *within(Job.created_at),
+                        Job.payload["business_id"].as_string().in_(business_id_strings[offset : offset + 5000]),
+                    )
+                    .group_by(Job.job_type, Job.status)
+                ).all()
+            }
+        )
 
-    website_business_ids = {website.business_id for website in websites}
-    finding_counts = Counter(item.code for item in findings)
-    score_actions = Counter(item.recommended_next_action for item in scores)
-    score_bands = Counter(item.band for item in scores)
-    crm_counts = Counter(item.event_type for item in crm_events)
+    report_vertical = campaign_map[campaign_id] if campaign_id is not None else vertical
     quality: list[dict[str, Any]] = [
-        {"code": "businesses_discovered", "count": len(businesses)},
-        {"code": "duplicates", "count": sum(1 for item in dedupe if item.merged)},
-        {"code": "ambiguous_candidates", "count": sum(1 for item in candidates if item.status == "ambiguous")},
+        {"code": "businesses_discovered", "count": business_count},
+        {"code": "duplicates", "count": duplicate_count},
+        {"code": "ambiguous_candidates", "count": candidate_status.get("ambiguous", 0)},
         {
             "code": "unresolved_candidates",
-            "count": sum(1 for item in candidates if item.status in {"ambiguous", "unresolved"}),
+            "count": candidate_status.get("ambiguous", 0) + candidate_status.get("unresolved", 0),
         },
-        {"code": "source_observations", "count": len(observations)},
-        {"code": "external_identities", "count": len(identities)},
-        {"code": "audit_runs", "count": len(audits)},
-        {"code": "website_healthy", "count": finding_counts.get("WEBSITE_HEALTHY", 0)},
-        {"code": "website_unreachable", "count": finding_counts.get("WEBSITE_UNREACHABLE", 0)},
+        {"code": "source_observations", "count": observation_count},
+        {"code": "external_identities", "count": identity_count},
+        {"code": "audit_runs", "count": audit_count},
+        {"code": "website_healthy", "count": audit_finding_counts.get("WEBSITE_HEALTHY", 0)},
+        {"code": "website_unreachable", "count": audit_finding_counts.get("WEBSITE_UNREACHABLE", 0)},
         {
             "code": "website_missing",
-            "count": finding_counts.get("WEBSITE_MISSING", 0)
-            + sum(1 for item in businesses if item.id not in website_business_ids),
+            "count": audit_finding_counts.get("WEBSITE_MISSING", 0) + missing_website_count,
         },
-        {"code": "score_count", "count": len(scores)},
-        {"code": "brief_count", "count": len(brief_ids)},
-        {"code": "average_score", "count": round(sum(item.score for item in scores) / len(scores), 2) if scores else 0},
-        {"code": "demo_generated", "count": len(demos)},
-        {"code": "demo_qa_passed", "count": sum(1 for item in qa_runs if item.status == "passed")},
-        {"code": "demo_qa_failed", "count": sum(1 for item in qa_runs if item.status == "failed")},
-        {"code": "approved_demos", "count": sum(1 for item in demos if item.status == "approved")},
-        {"code": "outreach_drafts_ready", "count": sum(1 for item in packages if item.status == "ready")},
-        {"code": "outreach_drafts_blocked", "count": sum(1 for item in packages if item.status == "blocked")},
-        {"code": "readiness_reviews", "count": len(readiness)},
-        {"code": "manual_outreach_logs", "count": len(executions)},
+        {"code": "score_count", "count": sum(score_bands.values())},
+        {"code": "brief_count", "count": brief_count},
+        {"code": "average_score", "count": round(float(average_score), 2) if average_score is not None else 0},
+        {"code": "demo_generated", "count": sum(demo_statuses.values())},
+        {"code": "demo_qa_passed", "count": qa_statuses.get("passed", 0)},
+        {"code": "demo_qa_failed", "count": qa_statuses.get("failed", 0)},
+        {"code": "approved_demos", "count": demo_statuses.get("approved", 0)},
+        {"code": "outreach_drafts_ready", "count": package_statuses.get("ready", 0)},
+        {"code": "outreach_drafts_blocked", "count": package_statuses.get("blocked", 0)},
+        {"code": "readiness_reviews", "count": review_count},
+        {"code": "manual_outreach_logs", "count": sum(execution_channels.values())},
         {"code": "system_delivery_count", "count": 0},
-        {"code": "proposal_packages_created", "count": len(proposals)},
-        {"code": "proposal_approved", "count": sum(1 for item in proposals if item.status == "approved")},
-        {"code": "proposal_exported", "count": len(proposal_exports)},
+        {"code": "proposal_packages_created", "count": sum(proposal_statuses.values())},
+        {"code": "proposal_approved", "count": proposal_statuses.get("approved", 0)},
+        {"code": "proposal_exported", "count": export_count},
         {
             "code": "proposal_ready_queue_count",
-            "count": sum(1 for item in proposals if item.status in {"draft", "changes_requested"}),
+            "count": proposal_statuses.get("draft", 0) + proposal_statuses.get("changes_requested", 0),
         },
-        {"code": "suppression_entries", "count": len(suppressions)},
-        {"code": "do_not_contact_holds", "count": sum(1 for item in risks if item.code == "DO_NOT_CONTACT")},
+        {"code": "suppression_entries", "count": suppression_count},
+        {"code": "do_not_contact_holds", "count": risk_counts.get("DO_NOT_CONTACT", 0)},
     ]
     quality.extend({"code": f"score_band:{key}", "count": value} for key, value in sorted(score_bands.items()))
     quality.extend({"code": f"score_action:{key}", "count": value} for key, value in sorted(score_actions.items()))
-    quality.extend({"code": f"audit_finding:{key}", "count": value} for key, value in sorted(finding_counts.items()))
-    quality.extend({"code": f"crm_event:{key}", "count": value} for key, value in sorted(crm_counts.items()))
-    job_counts = Counter((item.job_type, item.status) for item in jobs if item.status in {"failed", "not_eligible"})
+    quality.extend(
+        {"code": f"audit_finding:{key}", "count": value} for key, value in sorted(audit_finding_counts.items())
+    )
+    quality.extend({"code": f"crm_event:{key}", "count": value} for key, value in sorted(crm_types.items()))
     quality.extend(
         {"code": f"job:{job_type}:{status}", "count": count} for (job_type, status), count in sorted(job_counts.items())
     )
-    channel_counts = Counter(item.channel for item in channel_approvals if item.approved)
-    quality.extend({"code": f"selected_channel:{key}", "count": value} for key, value in sorted(channel_counts.items()))
     quality.extend(
-        {"code": f"execution_channel:{key}", "count": value}
-        for key, value in sorted(Counter(item.channel for item in executions).items())
+        {"code": f"selected_channel:{key}", "count": value} for key, value in sorted(approved_channels.items())
+    )
+    quality.extend(
+        {"code": f"execution_channel:{key}", "count": value} for key, value in sorted(execution_channels.items())
     )
 
     workload_counter: Counter[tuple[str, str]] = Counter()
-    workload_counter.update((item.reviewer, "demo_review") for item in reviews)
-    workload_counter.update((item.reviewer, "readiness_review") for item in readiness)
-    workload_counter.update((item.operator, "manual_outreach") for item in executions)
-    workload_counter.update((item.operator, "crm_event") for item in crm_events)
+    workload_counter.update({(operator, "demo_review"): count for operator, count in demo_reviewers.items()})
+    workload_counter.update({(operator, "readiness_review"): count for operator, count in readiness_reviewers.items()})
+    workload_counter.update({(operator, "manual_outreach"): count for operator, count in execution_operators.items()})
+    workload_counter.update({(operator, "crm_event"): count for operator, count in crm_operators.items()})
     workload = [
         {"operator": operator, "category": category, "count": count}
         for (operator, category), count in sorted(workload_counter.items())
     ]
     warnings = []
-    if not businesses:
+    if not business_count:
         warnings.append("No businesses matched the selected filters.")
     limitations = [
         "Metrics are computed live from append-only operational tables.",
@@ -310,7 +391,9 @@ def build_pilot_report(
         details = {
             "transitions": dict(sorted(transitions.items())),
             "jobs_failed_or_not_eligible": {f"{key[0]}:{key[1]}": value for key, value in sorted(job_counts.items())},
-            "common_audit_findings": dict(finding_counts.most_common(20)),
+            "common_audit_findings": dict(
+                sorted(audit_finding_counts.items(), key=lambda pair: (-pair[1], pair[0]))[:20]
+            ),
         }
     return {
         "campaign_id": campaign_id,

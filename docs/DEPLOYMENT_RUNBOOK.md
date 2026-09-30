@@ -6,7 +6,7 @@
 4. Start the API with `PYTHONPATH=apps/api/src;packages/domain/src;packages/scoring/src;integrations/maps_scraper/src;integrations/website_auditor/src python -m uvicorn lboe_api.main:app --host 127.0.0.1 --port 8000`.
 5. Run pilot/proposal/delivery smoke scripts. Back up PostgreSQL and the `artifacts/` and `exports/` roots before upgrades.
 
-Production-like operation requires `LBOE_AUTH_ENABLED=true`, a non-default auth secret, secure cookies behind HTTPS, persistent PostgreSQL/Redis volumes, and an external secret manager. No credentials belong in LBOE tables or exports. The current private VPS deployment is intentionally bound to the Tailscale network and keeps the token gate disabled; do not expose that profile publicly without enabling authentication and HTTPS.
+Production-like operation requires `LBOE_AUTH_ENABLED=true`, a non-default auth secret and operator token, secure cookies behind HTTPS, persistent PostgreSQL/Redis volumes, and an external secret manager. With auth enabled, send the operator token as `Authorization: Bearer …` on `/v1/*`; `/health` and `/ready` remain unauthenticated for probes. Enable `LBOE_CSRF_ENABLED=true` for same-origin checks on authenticated UI writes. No credentials belong in LBOE tables or exports. The current private VPS deployment is intentionally bound to the Tailscale network and keeps the token gate disabled; do not expose that profile publicly without enabling authentication and HTTPS.
 
 ## Ubuntu Docker deployment
 
