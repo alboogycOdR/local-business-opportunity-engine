@@ -227,3 +227,7 @@ async def serve() -> None:
 def main() -> None:
     logging.basicConfig(level=os.getenv("LBOE_LOG_LEVEL", "INFO"))
     asyncio.run(serve())
+
+
+if __name__ == "__main__":
+    main()
