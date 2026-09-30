@@ -69,6 +69,7 @@ def test_password_hash_is_salted_and_verifiable() -> None:
     first = hash_password("a-secure-test-password")
     second = hash_password("a-secure-test-password")
     assert first != second
+    assert first.startswith("scrypt:")
     assert verify_password("a-secure-test-password", first)
     assert not verify_password("wrong-password", first)
 

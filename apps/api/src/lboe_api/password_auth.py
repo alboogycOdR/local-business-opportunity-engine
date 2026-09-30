@@ -31,7 +31,7 @@ def hash_password(password: str, *, salt: bytes | None = None) -> str:
     digest = hashlib.scrypt(
         password.encode("utf-8"), salt=actual_salt, n=SCRYPT_N, r=SCRYPT_R, p=SCRYPT_P, dklen=SCRYPT_DKLEN
     )
-    return "$".join(
+    return ":".join(
         (
             "scrypt",
             str(SCRYPT_N),
@@ -45,7 +45,8 @@ def hash_password(password: str, *, salt: bytes | None = None) -> str:
 
 def verify_password(password: str, encoded: str) -> bool:
     try:
-        algorithm, n, r, p, salt_text, digest_text = encoded.split("$", 5)
+        separator = ":" if encoded.startswith("scrypt:") else "$"
+        algorithm, n, r, p, salt_text, digest_text = encoded.split(separator, 5)
         if algorithm != "scrypt":
             return False
         salt = base64.urlsafe_b64decode(salt_text.encode("ascii"))
