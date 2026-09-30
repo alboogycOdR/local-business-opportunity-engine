@@ -115,3 +115,16 @@ When finishing a sprint/task, report:
 7. next recommended work
 
 Do not claim completion if validation is red.
+
+## 11. VPS deployment synchronization
+
+After considerable local changes are validated and merged, default to checking
+whether the VPS deployment is behind the repository. Treat deployment status as
+part of the completion review rather than assuming that a Git push updated the
+server.
+
+When the user has authorized deployment, back up persistent state, deploy the
+current committed revision, apply forward-only migrations, rebuild all affected
+services, and verify health, readiness, worker health, and the operator UI. When
+deployment is not authorized or cannot be completed, report the VPS revision gap
+explicitly as remaining work.

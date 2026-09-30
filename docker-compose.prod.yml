@@ -53,6 +53,38 @@ services:
       - ./artifacts:/app/artifacts
       - ./exports:/app/exports
 
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "lboe_worker.worker"]
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      LBOE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-lboe}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lboe}
+      LBOE_REDIS_URL: redis://redis:6379/0
+      PYTHONPATH: /app/apps/worker/src:/app/apps/api/src:/app/packages/domain/src:/app/packages/scoring/src:/app/integrations/maps_scraper/src:/app/integrations/website_auditor/src
+      LBOE_AUDIT_ARTIFACT_ROOT: /app/artifacts/audits
+      LBOE_WORKER_HEARTBEAT: /tmp/lboe-worker-heartbeat
+      LBOE_WORKER_NAME: ${LBOE_WORKER_NAME:-worker-1}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./artifacts:/app/artifacts
+    mem_limit: 1g
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "python", "-m", "lboe_worker.healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+
 volumes:
   lboe_prod_postgres:
   lboe_prod_redis:
