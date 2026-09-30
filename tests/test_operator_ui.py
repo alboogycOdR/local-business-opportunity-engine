@@ -69,6 +69,73 @@ def test_no_website_queue_and_campaign_filter() -> None:
         assert "View opportunity" in opportunities.text
 
 
+def test_no_website_lead_can_complete_concept_generation_from_ui() -> None:
+    with TestClient(app) as client:
+        campaign = client.post("/v1/campaigns", json={"name": "No Website Demo Flow", "vertical": "hair_salon"}).json()
+        imported = client.post(
+            f"/v1/campaigns/{campaign['id']}/import",
+            json={
+                "format": "json",
+                "records": [
+                    {
+                        "display_name": "Synthetic No Website Salon",
+                        "category": "hair salon",
+                        "locality": "Cape Town",
+                        "phone": "+27210000999",
+                    }
+                ],
+            },
+        ).json()
+        business_id = imported["successes"][0]["business_id"]
+
+        detail = client.get(f"/ui/businesses/{business_id}")
+        assert "Score this lead" in detail.text
+
+        scored = client.post(f"/ui/businesses/{business_id}/action", data={"action": "score"}, follow_redirects=True)
+        assert scored.status_code == 200
+        assert "Prepare business brief" in scored.text
+
+        briefed = client.post(f"/ui/businesses/{business_id}/action", data={"action": "brief"}, follow_redirects=True)
+        assert briefed.status_code == 200
+        assert "Generate concept preview" in briefed.text
+
+        generated = client.post(
+            f"/ui/businesses/{business_id}/action", data={"action": "generate_demo"}, follow_redirects=True
+        )
+        assert generated.status_code == 200
+        assert "Review the concept demo" in generated.text
+        preview_path = generated.text.split("href='/ui/demos/", 1)[1].split("'", 1)[0]
+        preview = client.get("/ui/demos/" + preview_path)
+        assert preview.status_code == 200
+        assert "Synthetic No Website Salon" in preview.text
+        assert "Concept preview prepared independently" in preview.text
+
+
+def test_opportunity_card_does_not_misclassify_unchecked_website_as_missing() -> None:
+    with TestClient(app) as client:
+        campaign = client.post(
+            "/v1/campaigns", json={"name": "Unchecked Website Card", "vertical": "hair_salon"}
+        ).json()
+        client.post(
+            f"/v1/campaigns/{campaign['id']}/import",
+            json={
+                "format": "json",
+                "records": [
+                    {
+                        "display_name": "Unchecked Website Salon",
+                        "category": "hair salon",
+                        "website": "https://example.com",
+                    }
+                ],
+            },
+        )
+        html = client.get("/ui/opportunities").text
+        start = html.index("Unchecked Website Salon")
+        card = html[start : start + 1200]
+        assert "No website found" not in card
+        assert "Starter Website" not in card
+
+
 def test_review_gap_opportunity_card_and_peer_evidence() -> None:
     from datetime import UTC, datetime
 

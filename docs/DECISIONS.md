@@ -65,3 +65,13 @@ existing operator bearer token remains restricted to versioned API access.
 **Reason:** Operators need a familiar daily login without copying a long API token,
 while the application retains CSRF protection, secure cookies, server-side
 revocation, and a separate credential for non-browser API clients.
+
+## ADR-012 — Missing websites receive a deterministic availability assessment
+
+**Decision:** Scoring a discovered business with no normalized website contact
+records a completed `no-website-assessment-v1` audit and the corresponding
+`DISCOVERED → AUDITING → AUDITED → SCORED` events before concept generation.
+**Reason:** Website browser auditing is impossible when no URL exists, but the
+absence itself is deterministic evidence. Recording the assessment preserves
+the lifecycle and audit trail instead of leaving generated demos attached to a
+business that still appears merely discovered.

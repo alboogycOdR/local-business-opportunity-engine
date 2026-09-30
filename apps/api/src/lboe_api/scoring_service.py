@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime
 
 from lboe_domain import (
     AuditEvidence,
@@ -31,6 +32,8 @@ from .db import (
     PipelineEvent,
     SuppressionEntry,
 )
+
+NO_WEBSITE_ASSESSMENT_VERSION = "no-website-assessment-v1"
 
 
 def score_idempotency_key(request: OpportunityScoreRequest) -> str:
@@ -157,6 +160,51 @@ def persist_score(
 async def execute_score(
     session: Session, request: OpportunityScoreRequest, business: Business
 ) -> tuple[OpportunityScore, OpportunityScoreResult]:
+    current = LeadState(business.state)
+    has_website = session.scalar(
+        select(Contact.id).where(Contact.business_id == business.id, Contact.channel == "website")
+    )
+    if current == LeadState.DISCOVERED and has_website is None:
+        now = datetime.now(UTC)
+        assessment_run = AuditRun(
+            business_id=business.id,
+            auditor_version=NO_WEBSITE_ASSESSMENT_VERSION,
+            started_at=now,
+            completed_at=now,
+            status="completed",
+            technical_metadata={"assessment": "no_discovered_website"},
+        )
+        session.add(assessment_run)
+        session.flush()
+        session.add(
+            AuditFindingRow(
+                audit_run_id=assessment_run.id,
+                code="NO_WEBSITE",
+                category="availability",
+                severity="high",
+                deterministic=True,
+                status="not_detected",
+                observed_value={"website": None},
+                evidence={"source": "normalized_contacts", "website_contact_present": False},
+                source_url=None,
+                confidence=1.0,
+                observed_at=now,
+                auditor_version=NO_WEBSITE_ASSESSMENT_VERSION,
+            )
+        )
+        for target in (LeadState.AUDITING, LeadState.AUDITED):
+            validate_transition(current, target)
+            session.add(
+                PipelineEvent(
+                    business_id=business.id,
+                    from_state=current.value,
+                    to_state=target.value,
+                    actor="score",
+                    reason="no website contact was discovered; recorded deterministic availability assessment",
+                )
+            )
+            current = target
+            business.state = target.value
     context, audit = _latest_context(session, business)
     result = score_opportunity(context)
     row = persist_score(session, business, result, audit)

@@ -419,6 +419,9 @@ def build_opportunity_cards(db: Session, limit: int = 20) -> list[dict[str, Any]
     scores = _latest_per_business(db, OpportunityScore, OpportunityScore.created_at, ids)
     briefs = _latest_per_business(db, BusinessBrief, BusinessBrief.created_at, ids)
     websites = _latest_per_business(db, Website, Website.checked_at, ids)
+    website_business_ids = set(
+        db.scalars(select(Contact.business_id).where(Contact.business_id.in_(ids), Contact.channel == "website")).all()
+    )
     demos = _latest_per_business(db, GeneratedDemo, GeneratedDemo.created_at, ids)
     proposals = _latest_per_business(db, ProposalPackage, ProposalPackage.created_at, ids)
     deliveries = _latest_per_business(db, DeliveryProject, DeliveryProject.updated_at, ids)
@@ -466,6 +469,7 @@ def build_opportunity_cards(db: Session, limit: int = 20) -> list[dict[str, Any]
         score = scores.get(business.id)
         brief = briefs.get(business.id)
         website = websites.get(business.id)
+        has_website = website is not None or business.id in website_business_ids
         demo = demos.get(business.id)
         proposal = proposals.get(business.id)
         delivery = deliveries.get(business.id)
@@ -475,7 +479,7 @@ def build_opportunity_cards(db: Session, limit: int = 20) -> list[dict[str, Any]
         reasons: list[str] = []
         if review_gap:
             reasons.extend(review_evidence)
-        if website is None and len(reasons) < 4:
+        if not has_website and len(reasons) < 4:
             reasons.append("No website found")
         for component in components:
             label = component_labels.get(component.code)
@@ -483,7 +487,7 @@ def build_opportunity_cards(db: Session, limit: int = 20) -> list[dict[str, Any]
                 reasons.append(label)
             if len(reasons) >= 4:
                 break
-        if not reasons and website is not None:
+        if not reasons and has_website:
             reasons.append("Website presence recorded")
         if business.normalized_phone and len(reasons) < 4:
             reasons.append("Phone contact available")
@@ -518,7 +522,7 @@ def build_opportunity_cards(db: Session, limit: int = 20) -> list[dict[str, Any]
             offer = "Review Gap Opportunity"
             next_label = "Review evidence"
             next_url = f"/ui/businesses/{business.id}"
-        elif website is None:
+        elif not has_website:
             offer = "Starter Website"
             next_label = "View opportunity"
             next_url = f"/ui/businesses/{business.id}"
@@ -1087,11 +1091,11 @@ def business_detail(
         latest_audit
         and (
             score is None
-            or brief is None
             or (latest_audit.completed_at and score and score.created_at < latest_audit.completed_at)
             or (latest_audit.completed_at and brief and brief.created_at < latest_audit.completed_at)
         )
     )
+    brief_needs_refresh = bool(score and brief and brief.created_at < score.created_at)
     action_labels = {
         "generate_demo": (
             "Generate a concept demo",
@@ -1189,14 +1193,21 @@ def business_detail(
         action_title = "Review the concept demo"
         action_reason = "The concept passed QA and is waiting for your human review decision."
         next_action_button = "<a class='button button-primary' href='#workflow'>Review concept</a>"
-    elif raw_action == "audit_required" and latest_audit is None:
+    elif website_contact and latest_audit is None:
+        action_title, action_reason = action_labels["audit_required"]
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='audit'><button class='button-primary'>Run website audit</button></form>"
     elif evidence_needs_refresh:
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='refresh_evidence'><button class='button-primary'>Refresh score and brief</button></form>"
-    elif website_contact and score and brief and not enrichment_runs:
-        next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='enrich'><button class='button-primary'>Run optional enrichment</button></form>"
-    elif brief is None:
+    elif score is None:
+        action_title = "Score this lead"
+        action_reason = "Use the available listing evidence to determine whether a safe concept preview is appropriate."
+        next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='score'><button class='button-primary'>Score this lead</button></form>"
+    elif brief is None or brief_needs_refresh:
+        action_title = "Prepare the business brief"
+        action_reason = "Create a source-backed brief from the latest score before generating a concept preview."
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='brief'><button class='button-primary'>Prepare business brief</button></form>"
+    elif website_contact and not enrichment_runs:
+        next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='enrich'><button class='button-primary'>Run optional enrichment</button></form>"
     elif raw_action in {"conversion_upgrade_offer", "technical_cleanup_offer", "generate_demo"}:
         action_value = "generate_demo"
         action_label = "Generate concept preview"
@@ -1205,8 +1216,6 @@ def business_detail(
         elif raw_action == "technical_cleanup_offer":
             action_label = "Generate cleanup concept"
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='{action_value}'><button class='button-primary'>{action_label}</button></form>"
-    elif score is None:
-        next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='score'><button class='button-primary'>Score this lead</button></form>"
     elif any(demo.status == "approved" for demo in demos) and not proposals:
         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='proposal'><button class='button-primary'>Create proposal pack</button></form>"
     suppression_banner = (
@@ -1269,7 +1278,7 @@ async def business_action(
     queued_job_id: str | None = None
     try:
         if action == "score":
-            await score_business(business_id, ScoreRequestBody(idempotency_key="ui"), db)
+            await score_business(business_id, ScoreRequestBody(idempotency_key=f"ui-score-{uuid.uuid4()}"), db)
         elif action == "audit":
             result = await audit_business(
                 business_id,
@@ -1289,7 +1298,7 @@ async def business_action(
             )
             queued_job_id = result.get("job_id") if result.get("status") == "queued" else None
         elif action == "brief":
-            await create_brief(business_id, {"idempotency_key": "ui"}, db)
+            await create_brief(business_id, {"idempotency_key": f"ui-brief-{uuid.uuid4()}"}, db)
         elif action == "generate_demo":
             result = create_demo(business_id, {"idempotency_key": "ui"}, db)
             if result.get("status") == "not_demo_eligible":
