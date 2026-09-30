@@ -751,6 +751,8 @@ class Operator(Base):
     __tablename__ = "operators"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     display_name: Mapped[str] = mapped_column(String(200))
+    username: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     role: Mapped[str] = mapped_column(String(30), default="operator")
     active: Mapped[bool] = mapped_column(default=True)

@@ -59,6 +59,7 @@ from lboe_api.db import (
 )
 from lboe_api.demo_generator import qa_explanations
 from lboe_api.main import SessionLocal, settings
+from lboe_api.password_auth import DUMMY_PASSWORD_HASH, normalize_username, verify_password
 from lboe_api.pilot_service import (
     POLICY_VERSION,
     audit,
@@ -89,38 +90,56 @@ def session() -> Iterator[Session]:
 def login_page() -> HTMLResponse:
     return page(
         "Operator login",
-        "<form method='post'><label>Operator token <input name='token' type='password' required></label><button>Login</button></form><p>Internal operator access only. Configure LBOE_AUTH_ENABLED and LBOE_OPERATOR_AUTH_TOKEN.</p>",
+        "<form method='post'><label>Username <input name='username' autocomplete='username' required></label>"
+        "<label>Password <input name='password' type='password' autocomplete='current-password' required></label>"
+        "<label class='checkbox'><input name='remember_me' type='checkbox' value='true'> Remember me for 30 days</label>"
+        "<button>Log in</button></form><p>Internal operator access only.</p>",
     )
 
 
 @router.post("/ui/login")
-def login(token: str = Form(...), db: Session = Depends(session)) -> Response:
-    if not settings.operator_auth_token or not secrets.compare_digest(token, settings.operator_auth_token):
-        raise HTTPException(status_code=401, detail="invalid_operator_token")
-    operator = db.scalar(select(Operator).where(Operator.active.is_(True)).order_by(Operator.created_at))
-    if operator is None:
-        raise HTTPException(status_code=409, detail="active_operator_required")
+def login(
+    username: str = Form(...),
+    password: str = Form(...),
+    remember_me: bool = Form(False),
+    db: Session = Depends(session),
+) -> Response:
+    operator = db.scalar(
+        select(Operator).where(Operator.username == normalize_username(username), Operator.active.is_(True))
+    )
+    password_hash = operator.password_hash if operator and operator.password_hash else DUMMY_PASSWORD_HASH
+    if operator is None or not operator.password_hash or not verify_password(password, password_hash):
+        return page(
+            "Operator login",
+            "<p role='alert'>The username or password is incorrect.</p>"
+            "<form method='post'><label>Username <input name='username' autocomplete='username' required></label>"
+            "<label>Password <input name='password' type='password' autocomplete='current-password' required></label>"
+            "<label class='checkbox'><input name='remember_me' type='checkbox' value='true'> Remember me for 30 days</label>"
+            "<button>Log in</button></form>",
+            status_code=401,
+        )
     raw = secrets.token_urlsafe(32)
     csrf = secrets.token_urlsafe(24)
     session_hash = hmac.new(settings.auth_secret.encode(), raw.encode(), hashlib.sha256).hexdigest()
     csrf_hash = hashlib.sha256(csrf.encode()).hexdigest()
-    from datetime import timedelta
+    session_lifetime = timedelta(days=30) if remember_me else timedelta(hours=8)
+    max_age = int(session_lifetime.total_seconds())
 
     db.add(
         OperatorSession(
             operator_id=operator.id,
             session_hash=session_hash,
             csrf_hash=csrf_hash,
-            expires_at=datetime.now(UTC) + timedelta(hours=8),
+            expires_at=datetime.now(UTC) + session_lifetime,
         )
     )
     db.commit()
     response = RedirectResponse("/ui", status_code=303)
     response.set_cookie(
-        "lboe_session", raw, httponly=True, secure=settings.secure_cookies, samesite="lax", max_age=28800
+        "lboe_session", raw, httponly=True, secure=settings.secure_cookies, samesite="lax", max_age=max_age
     )
     response.set_cookie(
-        "lboe_csrf", csrf, httponly=False, secure=settings.secure_cookies, samesite="lax", max_age=28800
+        "lboe_csrf", csrf, httponly=False, secure=settings.secure_cookies, samesite="lax", max_age=max_age
     )
     return response
 
@@ -167,7 +186,7 @@ def _accessible_tables(body: str) -> str:
     return body.replace("</table>", "</table></div>")
 
 
-def page(title: str, body: str) -> HTMLResponse:
+def page(title: str, body: str, *, status_code: int = 200) -> HTMLResponse:
     nav = "".join(f"<a href='{href}'>{label}</a>" for href, label in NAV_ITEMS)
     # Pages that render their own hero heading keep it as the single <h1>.
     heading = "" if "<h1" in body else f"<h1>{esc(title)}</h1>"
@@ -182,7 +201,8 @@ def page(title: str, body: str) -> HTMLResponse:
         "<aside class='safety' aria-label='Safety notice'>System delivery is disabled. LBOE does not send email, "
         "WhatsApp, SMS, review requests, or CRM messages.</aside>"
         f"<main id='main' tabindex='-1'><nav class='breadcrumb muted' aria-label='Breadcrumb'><a href='/ui'>Dashboard</a> / "
-        f"<span aria-current='page'>{esc(title)}</span></nav>{heading}{_accessible_tables(body)}</main></body></html>"
+        f"<span aria-current='page'>{esc(title)}</span></nav>{heading}{_accessible_tables(body)}</main></body></html>",
+        status_code=status_code,
     )
 
 

@@ -15,6 +15,8 @@ import pytest
 from fastapi.testclient import TestClient
 from lboe_api.config import Settings, production_security_errors
 from lboe_api.db import Job, Operator, OperatorSession
+from lboe_api.password_auth import hash_password, verify_password
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 # The worker is a sibling package in this monorepo; make its actual consumer available to this focused test.
@@ -46,7 +48,7 @@ def test_enabled_operator_auth_requires_bearer_for_versioned_api(monkeypatch: py
 def test_production_security_configuration_fails_closed() -> None:
     unsafe = Settings(environment="production")
     errors = production_security_errors(unsafe)
-    assert len(errors) == 5
+    assert len(errors) == 7
     assert any("LBOE_AUTH_ENABLED" in error for error in errors)
     assert any("LBOE_AUTH_SECRET" in error for error in errors)
 
@@ -57,8 +59,59 @@ def test_production_security_configuration_fails_closed() -> None:
         auth_secret="s" * 32,
         secure_cookies=True,
         csrf_enabled=True,
+        operator_username="admin",
+        operator_password_hash=hash_password("a-secure-test-password"),
     )
     assert production_security_errors(safe) == []
+
+
+def test_password_hash_is_salted_and_verifiable() -> None:
+    first = hash_password("a-secure-test-password")
+    second = hash_password("a-secure-test-password")
+    assert first != second
+    assert verify_password("a-secure-test-password", first)
+    assert not verify_password("wrong-password", first)
+
+
+def test_username_password_login_and_remember_me(monkeypatch: pytest.MonkeyPatch) -> None:
+    username = f"operator-{uuid.uuid4().hex[:10]}"
+    monkeypatch.setattr(api.settings, "auth_enabled", True)
+    monkeypatch.setattr(api.settings, "csrf_enabled", False)
+    monkeypatch.setattr(api.settings, "secure_cookies", False)
+    with api.SessionLocal() as db:
+        operator = Operator(
+            display_name="Login Test",
+            username=username,
+            password_hash=hash_password("a-secure-test-password"),
+        )
+        db.add(operator)
+        db.commit()
+        operator_id = operator.id
+
+    with TestClient(api.app) as client:
+        denied = client.post(
+            "/ui/login", data={"username": username, "password": "wrong-password"}, follow_redirects=False
+        )
+        response = client.post(
+            "/ui/login",
+            data={"username": username.upper(), "password": "a-secure-test-password", "remember_me": "true"},
+            follow_redirects=False,
+        )
+        dashboard = client.get("/ui")
+
+    assert denied.status_code == 401
+    assert "username or password is incorrect" in denied.text
+    assert response.status_code == 303
+    assert "Max-Age=2592000" in response.headers.get_list("set-cookie")[0]
+    assert dashboard.status_code == 200
+    with api.SessionLocal() as db:
+        created = db.scalar(
+            select(OperatorSession)
+            .where(OperatorSession.operator_id == operator_id)
+            .order_by(OperatorSession.created_at.desc())
+        )
+        assert created is not None
+        assert created.expires_at - created.created_at > timedelta(days=29)
 
 
 def test_enabled_ui_csrf_rejects_cross_origin_writes(monkeypatch: pytest.MonkeyPatch) -> None:

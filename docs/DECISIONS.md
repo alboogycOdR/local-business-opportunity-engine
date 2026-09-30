@@ -55,3 +55,13 @@ stage.
 waiting for a future enrichment worker would prevent the objective baseline
 audit. This edge is intentionally narrow and does not authorize scoring,
 outreach, or transactional site actions.
+
+## ADR-011 — First-party operator accounts with revocable sessions
+
+**Decision:** The operator UI authenticates with a canonical username and a salted
+scrypt password hash. Standard sessions expire after eight hours; an explicit
+"remember me" choice extends the revocable server-side session to 30 days. The
+existing operator bearer token remains restricted to versioned API access.
+**Reason:** Operators need a familiar daily login without copying a long API token,
+while the application retains CSRF protection, secure cookies, server-side
+revocation, and a separate credential for non-browser API clients.

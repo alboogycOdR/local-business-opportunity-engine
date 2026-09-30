@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     auth_enabled: bool = False
     auth_secret: str = DEFAULT_AUTH_SECRET
     operator_auth_token: str = ""
+    operator_username: str = ""
+    operator_password_hash: str = ""
     secure_cookies: bool = False
     csrf_enabled: bool = False
     storage_backend: str = "local"
@@ -51,6 +53,10 @@ def production_security_errors(settings: Settings) -> list[str]:
         errors.append("LBOE_AUTH_ENABLED must be true")
     if len(settings.operator_auth_token) < 32:
         errors.append("LBOE_OPERATOR_AUTH_TOKEN must contain at least 32 characters")
+    if len(settings.operator_username.strip()) < 3:
+        errors.append("LBOE_OPERATOR_USERNAME must contain at least 3 characters")
+    if not settings.operator_password_hash.startswith("scrypt$"):
+        errors.append("LBOE_OPERATOR_PASSWORD_HASH must be a valid scrypt password hash")
     if settings.auth_secret == DEFAULT_AUTH_SECRET or len(settings.auth_secret) < 32:
         errors.append("LBOE_AUTH_SECRET must be a non-default value of at least 32 characters")
     if not settings.secure_cookies:

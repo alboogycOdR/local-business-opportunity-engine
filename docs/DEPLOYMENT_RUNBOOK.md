@@ -6,7 +6,7 @@
 4. Start the API with `PYTHONPATH=apps/api/src;packages/domain/src;packages/scoring/src;integrations/maps_scraper/src;integrations/website_auditor/src python -m uvicorn lboe_api.main:app --host 127.0.0.1 --port 8000`.
 5. Run pilot/proposal/delivery smoke scripts. Back up PostgreSQL and the `artifacts/` and `exports/` roots before upgrades.
 
-Production-like operation requires `LBOE_AUTH_ENABLED=true`, a non-default auth secret and operator token, secure cookies behind HTTPS, persistent PostgreSQL/Redis volumes, and an external secret manager. With auth enabled, send the operator token as `Authorization: Bearer …` on `/v1/*`; `/health` and `/ready` remain unauthenticated for probes. Enable `LBOE_CSRF_ENABLED=true` for same-origin checks on authenticated UI writes. No credentials belong in LBOE tables or exports. The current private VPS deployment is intentionally bound to the Tailscale network and keeps the token gate disabled; do not expose that profile publicly without enabling authentication and HTTPS.
+Production-like operation requires `LBOE_AUTH_ENABLED=true`, a non-default auth secret, operator username/password hash, and a separate API token, plus secure cookies behind HTTPS, persistent PostgreSQL/Redis volumes, and an external secret manager. Operators sign in through `/ui/login`; API clients send the operator token as `Authorization: Bearer …` on `/v1/*`. `/health` and `/ready` remain unauthenticated for probes. Enable `LBOE_CSRF_ENABLED=true` for same-origin checks on authenticated UI writes. Plaintext passwords do not belong in LBOE tables, exports, or environment files.
 
 ## Ubuntu Docker deployment
 
@@ -19,7 +19,8 @@ proxy.
 ```bash
 cp .env.example .env
 # Set a long random POSTGRES_PASSWORD, LBOE_AUTH_SECRET,
-# LBOE_OPERATOR_AUTH_TOKEN, and LBOE_AUTH_ENABLED=true in .env.
+# LBOE_OPERATOR_AUTH_TOKEN, LBOE_OPERATOR_USERNAME,
+# LBOE_OPERATOR_PASSWORD_HASH, and LBOE_AUTH_ENABLED=true in .env.
 docker compose -f docker-compose.prod.yml up -d --build
 curl http://127.0.0.1:8095/health
 curl http://127.0.0.1:8095/ready

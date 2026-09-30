@@ -79,6 +79,7 @@ from .db import (
     Job,
     LeadCrmEvent,
     ManualFollowUpTask,
+    Operator,
     OperatorSession,
     OpportunityComponent,
     OpportunityHold,
@@ -110,6 +111,7 @@ from .enrichment_service import enrichment_idempotency_key
 from .logging import configure_logging
 from .outreach_service import VERSION as OUTREACH_VERSION
 from .outreach_service import build_messages, safety_checks
+from .password_auth import normalize_username, valid_username
 from .pilot_service import pilot_for_business
 from .proposal_service import eligibility as proposal_eligibility
 from .proposal_service import export_package
@@ -175,6 +177,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         raise RuntimeError("unsafe production configuration: " + "; ".join(security_errors))
     if settings.auto_create_schema:
         Base.metadata.create_all(engine)
+    if settings.auth_enabled and settings.operator_username and settings.operator_password_hash:
+        username = normalize_username(settings.operator_username)
+        if not valid_username(username):
+            raise RuntimeError("unsafe production configuration: LBOE_OPERATOR_USERNAME has an invalid format")
+        with SessionLocal() as db:
+            operator = db.scalar(select(Operator).where(Operator.username == username))
+            if operator is None:
+                operator = Operator(display_name="Administrator", role="admin", active=True, username=username)
+                db.add(operator)
+            operator.password_hash = settings.operator_password_hash
+            db.commit()
     logger.info("api_started")
     yield
 
