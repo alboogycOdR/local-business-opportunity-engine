@@ -1,0 +1,34 @@
+diff --git a/apps/api/src/lboe_api/ui/routes.py b/apps/api/src/lboe_api/ui/routes.py
+index 6727e0e..fb70f41 100644
+--- a/apps/api/src/lboe_api/ui/routes.py
++++ b/apps/api/src/lboe_api/ui/routes.py
+@@ -6,7 +6,7 @@ import hmac
+ import html
+ import secrets
+ import uuid
+-from collections.abc import Sequence
++from collections.abc import Iterator, Sequence
+ from datetime import UTC, datetime, timedelta
+ from pathlib import Path
+ from typing import Any
+@@ -72,8 +72,18 @@ router = APIRouter()
+ DISCLAIMER = "Concept preview prepared independently for demonstration. Not the official website of this business."
+ 
+ 
+-def session() -> Session:
+-    return SessionLocal()
++def session() -> Iterator[Session]:
++    """Request-scoped session that is always closed (and its connection returned).
++
++    Returning ``SessionLocal()`` without closing it leaves every UI request's
++    transaction open until garbage collection; under concurrent load the pool
++    (5 + 10 overflow) is exhausted and all database routes fail permanently.
++    """
++    db = SessionLocal()
++    try:
++        yield db
++    finally:
++        db.close()
+ 
+ 
+ @router.get("/ui/login", response_class=HTMLResponse)

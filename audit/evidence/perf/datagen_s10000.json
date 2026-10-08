@@ -1,0 +1,99 @@
+{
+  "campaign_id": "f97a2c25-eb4c-4182-9838-bbec10abd424",
+  "businesses": 10000,
+  "worked": 300,
+  "elapsed_s": 461.5,
+  "outcomes": {
+    "contacted": 59,
+    "delivery_project": 31,
+    "demo:approved": 138,
+    "demo:not_demo_eligible:archive": 16,
+    "demo:not_demo_eligible:score_only": 3,
+    "demo:qa_failed:": 72,
+    "demo:qa_passed": 166,
+    "import_failures": 0,
+    "suppressed": 34
+  },
+  "timings": {
+    "POST import (500 rows)": {
+      "n": 20,
+      "p50_ms": 3357.4,
+      "p95_ms": 3679.0,
+      "max_ms": 4024.5,
+      "total_s": 67.17
+    },
+    "POST audit": {
+      "n": 300,
+      "p50_ms": 30.5,
+      "p95_ms": 40.7,
+      "max_ms": 60.5,
+      "total_s": 9.42
+    },
+    "POST score": {
+      "n": 5150,
+      "p50_ms": 31.2,
+      "p95_ms": 41.1,
+      "max_ms": 211.7,
+      "total_s": 166.12
+    },
+    "POST brief": {
+      "n": 5150,
+      "p50_ms": 35.8,
+      "p95_ms": 46.2,
+      "max_ms": 147.3,
+      "total_s": 188.49
+    },
+    "POST demo": {
+      "n": 257,
+      "p50_ms": 37.8,
+      "p95_ms": 46.8,
+      "max_ms": 76.3,
+      "total_s": 9.54
+    },
+    "POST demo review": {
+      "n": 138,
+      "p50_ms": 29.7,
+      "p95_ms": 36.5,
+      "max_ms": 135.4,
+      "total_s": 4.29
+    },
+    "POST outreach-draft": {
+      "n": 112,
+      "p50_ms": 35.9,
+      "p95_ms": 43.6,
+      "max_ms": 129.4,
+      "total_s": 4.16
+    },
+    "POST readiness": {
+      "n": 194,
+      "p50_ms": 29.5,
+      "p95_ms": 38.2,
+      "max_ms": 54.9,
+      "total_s": 5.88
+    },
+    "POST outreach-log": {
+      "n": 59,
+      "p50_ms": 21.3,
+      "p95_ms": 28.0,
+      "max_ms": 37.3,
+      "total_s": 1.3
+    },
+    "POST crm-event": {
+      "n": 93,
+      "p50_ms": 17.5,
+      "p95_ms": 22.3,
+      "max_ms": 27.4,
+      "total_s": 1.66
+    },
+    "POST proposal": {
+      "n": 31,
+      "p50_ms": 39.8,
+      "p95_ms": 48.7,
+      "max_ms": 70.3,
+      "total_s": 1.27
+    }
+  },
+  "sample_business_id": "52dad058-d10d-4935-aba0-7e90904f33d2",
+  "generated_at": "2026-09-29T13:46:29.040677+00:00",
+  "run_id": "03709936-8a8b-4edb-ae8d-ee85304fae64"
+}

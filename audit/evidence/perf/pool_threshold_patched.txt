@@ -1,0 +1,6 @@
+code=/tmp/claude-0/wt requests=200 concurrency=1 | {'200': 200} p95_ms 31.9 peak_conn 2 | API afterwards=200 | idle-in-transaction=0
+code=/tmp/claude-0/wt requests=200 concurrency=2 | {'200': 200} p95_ms 44.8 peak_conn 3 | API afterwards=200 | idle-in-transaction=0
+code=/tmp/claude-0/wt requests=200 concurrency=5 | {'200': 200} p95_ms 133.6 peak_conn 7 | API afterwards=200 | idle-in-transaction=0
+code=/tmp/claude-0/wt requests=200 concurrency=10 | {'200': 200} p95_ms 282.3 peak_conn 12 | API afterwards=200 | idle-in-transaction=0
+code=/tmp/claude-0/wt requests=200 concurrency=20 | {'200': 200} p95_ms 802.8 peak_conn 15 | API afterwards=200 | idle-in-transaction=0
+code=/tmp/claude-0/wt requests=200 concurrency=30 | {'200': 200} p95_ms 1032.9 peak_conn 15 | API afterwards=200 | idle-in-transaction=0

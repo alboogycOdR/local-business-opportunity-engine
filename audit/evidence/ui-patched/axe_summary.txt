@@ -1,0 +1,18 @@
+axe rule (WCAG 2.2 A/AA + best practice)   impact     baseline pages/nodes  patched pages/nodes
+color-contrast                             serious             43/482                 0/0      
+empty-table-header                         minor                2/4                   0/0      
+label                                      critical             4/12                  0/0      
+region                                     moderate            43/86                  0/0      
+scrollable-region-focusable                serious              5/5                   0/0      
+select-name                                critical             8/16                  0/0      
+probe unlabeledControls  (desktop-1440) baseline=36 patched=0
+probe smallTargets       (mobile-390) baseline=574 patched=0
+probe uuidLinkText       (desktop-1440) baseline=3 patched=0
+probe rawUuidsInText     (desktop-1440) baseline=4 patched=1
+probe jargon             (desktop-1440) baseline=272 patched=197
+pages with >1 <h1>: baseline 10 patched 0 []
+skip link: baseline False patched True
+errors (CSP-blocked axe injection on previews expected): ['demo-internal-preview', 'prospect-preview']
+keyboard, dashboard: first stop baseline LBOE Operator Cockpit | patched Skip to main content
+mobile overflow pages: baseline [] patched ['campaigns', 'queue-no-website']
+laptop-1024 overflow: baseline ['campaign'] patched []

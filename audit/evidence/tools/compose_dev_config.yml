@@ -1,0 +1,61 @@
+name: local-business-opportunity-engine
+services:
+  postgres:
+    environment:
+      POSTGRES_DB: lboe
+      POSTGRES_PASSWORD: lboe_dev_only
+      POSTGRES_USER: lboe
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U lboe -d lboe
+      timeout: 5s
+      interval: 5s
+      retries: 10
+    image: postgres:16-alpine
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 5432
+        published: "5432"
+        protocol: tcp
+    volumes:
+      - type: volume
+        source: lboe_postgres
+        target: /var/lib/postgresql/data
+        volume: {}
+  redis:
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      timeout: 3s
+      interval: 5s
+      retries: 10
+    image: redis:7-alpine
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 6379
+        published: "6379"
+        protocol: tcp
+    volumes:
+      - type: volume
+        source: lboe_redis
+        target: /data
+        volume: {}
+networks:
+  default:
+    name: local-business-opportunity-engine_default
+volumes:
+  lboe_postgres:
+    name: local-business-opportunity-engine_lboe_postgres
+  lboe_redis:
+    name: local-business-opportunity-engine_lboe_redis

@@ -1,0 +1,218 @@
+diff --git a/apps/api/src/lboe_api/reporting_service.py b/apps/api/src/lboe_api/reporting_service.py
+index 15e6a11..363468a 100644
+--- a/apps/api/src/lboe_api/reporting_service.py
++++ b/apps/api/src/lboe_api/reporting_service.py
+@@ -73,6 +73,22 @@ def _bounds(start_date: date | None, end_date: date | None) -> tuple[datetime |
+     return start, end
+ 
+ 
++_IN_CHUNK = 5000  # keep IN lists well below driver/parameter limits
++
++
++def _in(session: Session, model: Any, column: Any, values: set[Any]) -> list[Any]:
++    """Rows of ``model`` whose ``column`` is in ``values`` (chunked, SQL-side)."""
++    ordered = list(values)
++    rows: list[Any] = []
++    for start in range(0, len(ordered), _IN_CHUNK):
++        rows.extend(session.scalars(select(model).where(column.in_(ordered[start : start + _IN_CHUNK]))).all())
++    return rows
++
++
++def _scoped(session: Session, model: Any, business_ids: set[Any]) -> list[Any]:
++    return _in(session, model, model.business_id, business_ids)
++
++
+ def _rate(numerator: int, denominator: int) -> float | None:
+     return round(numerator / denominator, 4) if denominator else None
+ 
+@@ -96,10 +112,13 @@ def build_pilot_report(
+         selected_campaign_ids = {campaign_id}
+     else:
+         selected_campaign_ids = {item.id for item in campaigns if vertical is None or item.vertical == vertical}
++    # Scope every query in SQL. Rows are still window-filtered in Python so naive and
++    # aware timestamps are compared exactly as before (see _in_window).
++    campaign_ids = list(selected_campaign_ids)
+     businesses = [
+         item
+-        for item in session.scalars(select(Business)).all()
+-        if item.campaign_id in selected_campaign_ids and _in_window(item.created_at, start, end)
++        for item in session.scalars(select(Business).where(Business.campaign_id.in_(campaign_ids))).all()
++        if _in_window(item.created_at, start, end)
+     ]
+     business_ids = {item.id for item in businesses}
+     report_vertical: str | None
+@@ -110,11 +129,7 @@ def build_pilot_report(
+     else:
+         report_vertical = vertical
+ 
+-    events = [
+-        item
+-        for item in session.scalars(select(PipelineEvent)).all()
+-        if item.business_id in business_ids and _in_window(item.created_at, start, end)
+-    ]
++    events = [item for item in _scoped(session, PipelineEvent, business_ids) if _in_window(item.created_at, start, end)]
+     funnel_counts: dict[str, int] = {stage: sum(1 for item in businesses if item.state == stage) for stage in STAGES}
+     funnel = [{"stage": stage, "count": funnel_counts[stage]} for stage in STAGES]
+     transitions = Counter(f"{item.from_state or 'NONE'}->{item.to_state}" for item in events)
+@@ -138,113 +153,82 @@ def build_pilot_report(
+ 
+     candidates = [
+         item
+-        for item in session.scalars(select(DiscoveryCandidate)).all()
+-        if item.campaign_id in selected_campaign_ids and _in_window(item.created_at, start, end)
++        for item in session.scalars(
++            select(DiscoveryCandidate).where(DiscoveryCandidate.campaign_id.in_(campaign_ids))
++        ).all()
++        if _in_window(item.created_at, start, end)
+     ]
+     dedupe = [
+         item
+-        for item in session.scalars(select(DedupeEvidence)).all()
+-        if item.campaign_id in selected_campaign_ids and _in_window(item.created_at, start, end)
++        for item in session.scalars(select(DedupeEvidence).where(DedupeEvidence.campaign_id.in_(campaign_ids))).all()
++        if _in_window(item.created_at, start, end)
+     ]
+     observations = [
+-        item
+-        for item in session.scalars(select(SourceObservation)).all()
+-        if item.business_id in business_ids and _in_window(item.observed_at, start, end)
++        item for item in _scoped(session, SourceObservation, business_ids) if _in_window(item.observed_at, start, end)
+     ]
+     identities = [
+         item
+-        for item in session.scalars(select(BusinessExternalIdentity)).all()
+-        if item.business_id in business_ids and _in_window(item.observed_at, start, end)
+-    ]
+-    audits = [
+-        item
+-        for item in session.scalars(select(AuditRun)).all()
+-        if item.business_id in business_ids and _in_window(item.started_at, start, end)
+-    ]
+-    websites = [
+-        item
+-        for item in session.scalars(select(Website)).all()
+-        if item.business_id in business_ids and _in_window(item.checked_at, start, end)
++        for item in _scoped(session, BusinessExternalIdentity, business_ids)
++        if _in_window(item.observed_at, start, end)
+     ]
++    audits = [item for item in _scoped(session, AuditRun, business_ids) if _in_window(item.started_at, start, end)]
++    websites = [item for item in _scoped(session, Website, business_ids) if _in_window(item.checked_at, start, end)]
+     audit_ids = {item.id for item in audits}
+     findings = [
+         item
+-        for item in session.scalars(select(AuditFinding)).all()
+-        if item.audit_run_id in audit_ids and _in_window(item.observed_at, start, end)
++        for item in _in(session, AuditFinding, AuditFinding.audit_run_id, audit_ids)
++        if _in_window(item.observed_at, start, end)
+     ]
+     scores = [
+-        item
+-        for item in session.scalars(select(OpportunityScore)).all()
+-        if item.business_id in business_ids and _in_window(item.created_at, start, end)
+-    ]
+-    demos = [
+-        item
+-        for item in session.scalars(select(GeneratedDemo)).all()
+-        if item.business_id in business_ids and _in_window(item.created_at, start, end)
++        item for item in _scoped(session, OpportunityScore, business_ids) if _in_window(item.created_at, start, end)
+     ]
++    demos = [item for item in _scoped(session, GeneratedDemo, business_ids) if _in_window(item.created_at, start, end)]
+     qa_runs = [
+         item
+-        for item in session.scalars(select(DemoQaRun)).all()
+-        if item.demo_id in {demo.id for demo in demos} and _in_window(item.created_at, start, end)
+-    ]
+-    reviews = [
+-        item
+-        for item in session.scalars(select(DemoReview)).all()
+-        if item.business_id in business_ids and _in_window(item.created_at, start, end)
++        for item in _in(session, DemoQaRun, DemoQaRun.demo_id, {demo.id for demo in demos})
++        if _in_window(item.created_at, start, end)
+     ]
++    reviews = [item for item in _scoped(session, DemoReview, business_ids) if _in_window(item.created_at, start, end)]
+     packages = [
+-        item
+-        for item in session.scalars(select(OutreachDraftPackage)).all()
+-        if item.business_id in business_ids and _in_window(item.created_at, start, end)
++        item for item in _scoped(session, OutreachDraftPackage, business_ids) if _in_window(item.created_at, start, end)
+     ]
+     readiness = [
+         item
+-        for item in session.scalars(select(OutreachReadinessReview)).all()
+-        if item.business_id in business_ids and _in_window(item.created_at, start, end)
+-    ]
+-    channel_approvals = [
+-        item
+-        for item in session.scalars(select(OutreachChannelApproval)).all()
+-        if item.outreach_readiness_review_id in {review.id for review in readiness}
++        for item in _scoped(session, OutreachReadinessReview, business_ids)
++        if _in_window(item.created_at, start, end)
+     ]
++    channel_approvals = _in(
++        session,
++        OutreachChannelApproval,
++        OutreachChannelApproval.outreach_readiness_review_id,
++        {review.id for review in readiness},
++    )
+     executions = [
+-        item
+-        for item in session.scalars(select(OutreachExecutionRecord)).all()
+-        if item.business_id in business_ids and _in_window(item.sent_at, start, end)
++        item for item in _scoped(session, OutreachExecutionRecord, business_ids) if _in_window(item.sent_at, start, end)
+     ]
+     crm_events = [
+-        item
+-        for item in session.scalars(select(LeadCrmEvent)).all()
+-        if item.business_id in business_ids and _in_window(item.occurred_at, start, end)
++        item for item in _scoped(session, LeadCrmEvent, business_ids) if _in_window(item.occurred_at, start, end)
+     ]
+     proposals = [
+-        item
+-        for item in session.scalars(select(ProposalPackage)).all()
+-        if item.business_id in business_ids and _in_window(item.created_at, start, end)
+-    ]
+-    proposal_exports = [
+-        item
+-        for item in session.scalars(select(ProposalExport)).all()
+-        if any(item.proposal_id == p.id for p in proposals)
++        item for item in _scoped(session, ProposalPackage, business_ids) if _in_window(item.created_at, start, end)
+     ]
++    proposal_exports = _in(session, ProposalExport, ProposalExport.proposal_id, {p.id for p in proposals})
+     suppressions = [
+-        item
+-        for item in session.scalars(select(SuppressionEntry)).all()
+-        if item.business_id in business_ids and _in_window(item.created_at, start, end)
++        item for item in _scoped(session, SuppressionEntry, business_ids) if _in_window(item.created_at, start, end)
+     ]
+     brief_ids = {
+-        item.id
+-        for item in session.scalars(select(BusinessBrief)).all()
+-        if item.business_id in business_ids and _in_window(item.created_at, start, end)
++        item.id for item in _scoped(session, BusinessBrief, business_ids) if _in_window(item.created_at, start, end)
+     }
+-    risks = [item for item in session.scalars(select(BusinessBriefRisk)).all() if item.business_brief_id in brief_ids]
++    risks = _in(session, BusinessBriefRisk, BusinessBriefRisk.business_brief_id, brief_ids)
++    business_id_strings = {str(x) for x in business_ids}
++    # Only failed / not-eligible jobs are reported, so only those are loaded.
+     jobs = [
+         item
+-        for item in session.scalars(select(Job)).all()
+-        if _in_window(item.created_at, start, end)
+-        and str(item.payload.get("business_id")) in {str(x) for x in business_ids}
++        for item in session.scalars(select(Job).where(Job.status.in_(["failed", "not_eligible"]))).all()
++        if _in_window(item.created_at, start, end) and str(item.payload.get("business_id")) in business_id_strings
+     ]
+ 
++    website_business_ids = {website.business_id for website in websites}
+     finding_counts = Counter(item.code for item in findings)
+     score_actions = Counter(item.recommended_next_action for item in scores)
+     score_bands = Counter(item.band for item in scores)
+@@ -265,7 +249,7 @@ def build_pilot_report(
+         {
+             "code": "website_missing",
+             "count": finding_counts.get("WEBSITE_MISSING", 0)
+-            + sum(1 for item in businesses if item.id not in {website.business_id for website in websites}),
++            + sum(1 for item in businesses if item.id not in website_business_ids),
+         },
+         {"code": "score_count", "count": len(scores)},
+         {"code": "brief_count", "count": len(brief_ids)},

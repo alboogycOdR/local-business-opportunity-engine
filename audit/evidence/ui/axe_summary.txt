@@ -1,0 +1,9 @@
+ERRORS []
+rule                             impact    pages  nodes  wcag
+select-name                      critical      8     16  wcag2a,wcag412  | Select element must have an accessible name
+label                            critical      4     12  wcag2a,wcag412  | Form elements must have labels
+color-contrast                   serious      43    482  wcag143,wcag2aa  | Elements must meet minimum color contrast ratio thresholds
+scrollable-region-focusable      serious       5      5  wcag211,wcag213,wcag2a  | Scrollable region must have keyboard access
+region                           moderate     43     86  best-practice  | All page content should be contained by landmarks
+empty-table-header               minor         2      4  best-practice  | Table header text should not be empty
+pages x viewports scanned with axe: 90  pages with zero axe violations: ['demo-internal-preview', 'prospect-preview']

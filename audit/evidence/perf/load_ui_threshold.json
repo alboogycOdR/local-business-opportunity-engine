@@ -1,0 +1,191 @@
+[
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 60,
+    "concurrency": 1,
+    "statuses": {
+      "200": 59,
+      "500": 1
+    },
+    "throughput_rps": 1.9,
+    "p50_ms": 28.7,
+    "p95_ms": 58.9,
+    "max_ms": 30015.0,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 15,
+    "pg_connections_after": 8
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 60,
+    "concurrency": 10,
+    "statuses": {
+      "200": 15,
+      "500": 43,
+      "ReadError": 2
+    },
+    "throughput_rps": 0.4,
+    "p50_ms": 30015.9,
+    "p95_ms": 30027.0,
+    "max_ms": 30036.4,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 15,
+    "pg_connections_after": 15
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 60,
+    "concurrency": 15,
+    "statuses": {
+      "200": 15,
+      "500": 45
+    },
+    "throughput_rps": 0.7,
+    "p50_ms": 30009.5,
+    "p95_ms": 30037.2,
+    "max_ms": 30043.6,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 15,
+    "pg_connections_after": 15
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 60,
+    "concurrency": 16,
+    "statuses": {
+      "200": 15,
+      "500": 44,
+      "ReadError": 1
+    },
+    "throughput_rps": 0.7,
+    "p50_ms": 30017.0,
+    "p95_ms": 30043.8,
+    "max_ms": 30125.0,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 16,
+    "pg_connections_after": 15
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 60,
+    "concurrency": 20,
+    "statuses": {
+      "200": 15,
+      "500": 43,
+      "ReadError": 2
+    },
+    "throughput_rps": 0.7,
+    "p50_ms": 30028.8,
+    "p95_ms": 30167.7,
+    "max_ms": 30170.7,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 16,
+    "pg_connections_after": 15
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 60,
+    "concurrency": 30,
+    "statuses": {
+      "200": 15,
+      "500": 45
+    },
+    "throughput_rps": 1.0,
+    "p50_ms": 30038.1,
+    "p95_ms": 30168.5,
+    "max_ms": 30180.7,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 15,
+    "pg_connections_after": 15
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 200,
+    "concurrency": 1,
+    "statuses": {
+      "200": 200
+    },
+    "throughput_rps": 35.5,
+    "p50_ms": 25.8,
+    "p95_ms": 31.9,
+    "max_ms": 443.9,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 2,
+    "pg_connections_after": 2
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 200,
+    "concurrency": 2,
+    "statuses": {
+      "200": 200
+    },
+    "throughput_rps": 51.6,
+    "p50_ms": 35.2,
+    "p95_ms": 44.8,
+    "max_ms": 322.7,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 3,
+    "pg_connections_after": 3
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 200,
+    "concurrency": 5,
+    "statuses": {
+      "200": 200
+    },
+    "throughput_rps": 46.8,
+    "p50_ms": 98.4,
+    "p95_ms": 133.6,
+    "max_ms": 348.1,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 7,
+    "pg_connections_after": 5
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 200,
+    "concurrency": 10,
+    "statuses": {
+      "200": 200
+    },
+    "throughput_rps": 43.5,
+    "p50_ms": 209.9,
+    "p95_ms": 282.3,
+    "max_ms": 632.9,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 12,
+    "pg_connections_after": 5
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 200,
+    "concurrency": 20,
+    "statuses": {
+      "200": 200
+    },
+    "throughput_rps": 43.5,
+    "p50_ms": 396.8,
+    "p95_ms": 802.8,
+    "max_ms": 942.9,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 15,
+    "pg_connections_after": 5
+  },
+  {
+    "path": "/ui/businesses/b8333d97-1c49-4666-811f-c49aad50549e",
+    "requests": 200,
+    "concurrency": 30,
+    "statuses": {
+      "200": 200
+    },
+    "throughput_rps": 41.0,
+    "p50_ms": 670.3,
+    "p95_ms": 1032.9,
+    "max_ms": 1311.4,
+    "pg_connections_baseline": 0,
+    "pg_connections_peak": 15,
+    "pg_connections_after": 5
+  }
+]

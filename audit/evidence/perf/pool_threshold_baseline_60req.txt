@@ -1,0 +1,7 @@
+concurrency=1 | {'200': 59, '500': 1} p95_ms 58.9 peak_conn 15 | API afterwards=200 | idle-in-transaction=3
+concurrency=5 | load run exceeded 200s | API afterwards=500 | idle-in-transaction=15
+concurrency=10 | {'200': 15, '500': 43, 'ReadError': 2} p95_ms 30027.0 peak_conn 15 | API afterwards=500 | idle-in-transaction=15
+concurrency=15 | {'200': 15, '500': 45} p95_ms 30037.2 peak_conn 15 | API afterwards=500 | idle-in-transaction=15
+concurrency=16 | {'200': 15, '500': 44, 'ReadError': 1} p95_ms 30043.8 peak_conn 16 | API afterwards=500 | idle-in-transaction=15
+concurrency=20 | {'200': 15, '500': 43, 'ReadError': 2} p95_ms 30167.7 peak_conn 16 | API afterwards=500 | idle-in-transaction=15
+concurrency=30 | {'200': 15, '500': 45} p95_ms 30168.5 peak_conn 15 | API afterwards=500 | idle-in-transaction=15

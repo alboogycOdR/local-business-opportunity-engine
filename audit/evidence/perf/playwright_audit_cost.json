@@ -1,0 +1,37 @@
+{
+ "runs": [
+  {
+   "seconds": 1.38,
+   "peak_rss_mb": 550.5,
+   "screenshot_bytes": 215528,
+   "findings": 22
+  },
+  {
+   "seconds": 1.55,
+   "peak_rss_mb": 546.4,
+   "screenshot_bytes": 215528,
+   "findings": 22
+  },
+  {
+   "seconds": 1.34,
+   "peak_rss_mb": 549.8,
+   "screenshot_bytes": 215528,
+   "findings": 22
+  },
+  {
+   "seconds": 1.42,
+   "peak_rss_mb": 554.0,
+   "screenshot_bytes": 215528,
+   "findings": 22
+  },
+  {
+   "seconds": 1.34,
+   "peak_rss_mb": 548.7,
+   "screenshot_bytes": 215528,
+   "findings": 22
+  }
+ ],
+ "median_seconds": 1.38,
+ "median_screenshot_kb": 210.5,
+ "max_peak_rss_mb": 554.0
+}

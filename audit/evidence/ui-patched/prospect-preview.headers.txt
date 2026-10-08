@@ -1,0 +1,11 @@
+HTTP/1.1 200 OK
+date: Tue, 29 Sep 2026 16:21:47 GMT
+server: uvicorn
+x-robots-tag: noindex, nofollow, noarchive
+cache-control: no-store
+referrer-policy: no-referrer
+x-content-type-options: nosniff
+content-security-policy: default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+content-length: 2294
+content-type: text/html; charset=utf-8
+

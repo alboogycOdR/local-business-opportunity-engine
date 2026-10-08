@@ -1,0 +1,8 @@
+
+tests/test_enrichment.py:26
+  /home/user/local-business-opportunity-engine/tests/test_enrichment.py:26: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.asyncio
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_enrichment.py::test_fake_enrichment_is_deterministic - Fail...

@@ -1,0 +1,5 @@
+apps/api/src/lboe_api/ui/routes.py:621: error: Need type annotation for "campaign"  [var-annotated]
+apps/api/src/lboe_api/ui/routes.py:1246: error: Unused "type: ignore" comment  [unused-ignore]
+apps/api/src/lboe_api/ui/routes.py:1293: error: Unused "type: ignore" comment  [unused-ignore]
+apps/api/src/lboe_api/ui/routes.py:1298: error: "Base" has no attribute "id"  [attr-defined]
+Found 4 errors in 1 file (checked 64 source files)

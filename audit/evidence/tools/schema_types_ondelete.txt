@@ -1,0 +1,73 @@
+TYPE campaigns.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE pilot_runs.name: orm=VARCHAR(200) db=TEXT
+TYPE pilot_runs.vertical: orm=VARCHAR(100) db=TEXT
+TYPE pilot_runs.geography: orm=VARCHAR(200) db=TEXT
+TYPE pilot_runs.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE pilot_runs.updated_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE pilot_runs.activated_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE pilot_runs.closed_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE pilot_source_policy_acknowledgements.acknowledged_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE pilot_retrospectives.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE pilot_retrospectives.updated_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE pilot_export_runs.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE businesses.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE businesses.updated_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE business_external_identities.observed_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE source_observations.observed_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE source_observations.expires_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE enrichment_runs.started_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE enrichment_runs.completed_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE enrichment_facts.observed_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE suppression_entries.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE pipeline_events.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE jobs.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE dedupe_evidence.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE discovery_candidates.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE websites.checked_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE audit_runs.started_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE audit_runs.completed_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE audit_findings.observed_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE audit_artifacts.byte_size: orm=INTEGER db=BIGINT
+TYPE audit_artifacts.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE opportunity_scores.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE business_briefs.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE generated_demos.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE demo_qa_runs.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE demo_reviews.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE outreach_draft_packages.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE outreach_readiness_reviews.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE outreach_execution_records.sent_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE outreach_execution_records.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE lead_crm_events.occurred_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE lead_crm_events.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE manual_follow_up_tasks.due_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE manual_follow_up_tasks.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE manual_follow_up_tasks.completed_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE outreach_objections.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE proposal_packages.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE proposal_review_events.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE proposal_exports.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE delivery_projects.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE delivery_projects.updated_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE delivery_projects.closed_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE delivery_checklist_items.updated_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE delivery_milestones.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE delivery_milestones.completed_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE delivery_approvals.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE delivery_exports.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE operators.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE operator_sessions.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE operator_sessions.expires_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE operator_sessions.revoked_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE operator_assignments.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE operator_assignments.updated_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE operator_comments.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE operator_audit_events.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE demo_preview_links.expires_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE demo_preview_links.created_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE demo_preview_links.revoked_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+TYPE demo_preview_access_events.accessed_at: orm=TIMESTAMP WITH TIME ZONE db=TIMESTAMP
+type mismatches: 69
+FK ondelete distribution (db): {None: 99}
+naive DateTime columns in ORM: []
+tables: 63

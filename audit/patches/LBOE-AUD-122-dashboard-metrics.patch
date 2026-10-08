@@ -1,0 +1,63 @@
+diff --git a/apps/api/src/lboe_api/reporting_service.py b/apps/api/src/lboe_api/reporting_service.py
+index 363468a..abb122d 100644
+--- a/apps/api/src/lboe_api/reporting_service.py
++++ b/apps/api/src/lboe_api/reporting_service.py
+@@ -6,7 +6,7 @@ from collections import Counter
+ from datetime import UTC, date, datetime, time
+ from typing import Any
+ 
+-from sqlalchemy import select
++from sqlalchemy import func, select
+ from sqlalchemy.orm import Session
+ 
+ from .db import (
+@@ -326,3 +326,27 @@ def build_pilot_report(
+         "limitations": limitations,
+         "details": details,
+     }
++
++
++def dashboard_metrics(session: Session) -> dict[str, Any]:
++    """The handful of counts the operator dashboard shows, computed with SQL COUNTs.
++
++    Same funnel shape as ``build_pilot_report`` (all campaigns, no date window) without
++    materialising every operational row on each dashboard load.
++    """
++    by_state = dict(session.execute(select(Business.state, func.count()).group_by(Business.state)).all())
++    funnel = [{"stage": stage, "count": int(by_state.get(stage, 0))} for stage in STAGES]
++
++    def count(model: Any, *where: Any) -> int:
++        return int(session.scalar(select(func.count()).select_from(model).where(*where)) or 0)
++
++    quality = [
++        {"code": "system_delivery_count", "count": 0},
++        {"code": "jobs_failed_or_not_eligible", "count": count(Job, Job.status.in_(["failed", "not_eligible"]))},
++        {"code": "approved_demos", "count": count(GeneratedDemo, GeneratedDemo.status == "approved")},
++        {
++            "code": "proposal_ready_queue_count",
++            "count": count(ProposalPackage, ProposalPackage.status.in_(["draft", "changes_requested"])),
++        },
++    ]
++    return {"funnel_metrics": funnel, "quality_metrics": quality}
+diff --git a/apps/api/src/lboe_api/ui/routes.py b/apps/api/src/lboe_api/ui/routes.py
+index 6117c0a..937c9ab 100644
+--- a/apps/api/src/lboe_api/ui/routes.py
++++ b/apps/api/src/lboe_api/ui/routes.py
+@@ -66,7 +66,7 @@ from lboe_api.pilot_service import (
+     pilot_for_business,
+     readiness_summary,
+ )
+-from lboe_api.reporting_service import build_pilot_report
++from lboe_api.reporting_service import build_pilot_report, dashboard_metrics
+ from lboe_api.ui.presentation import fmt_dt, state_label, status_label
+ 
+ router = APIRouter()
+@@ -696,7 +696,7 @@ def next_action_panel(report: dict[str, Any]) -> str:
+ 
+ @router.get("/ui", response_class=HTMLResponse)
+ def dashboard(db: Session = Depends(session)) -> HTMLResponse:
+-    report = build_pilot_report(db)
++    report = dashboard_metrics(db)
+     quality = {item["code"]: item["count"] for item in report["quality_metrics"]}
+     lead_counts = dict(db.execute(select(Business.campaign_id, func.count()).group_by(Business.campaign_id)).all())
+     campaigns = db.scalars(select(Campaign).order_by(Campaign.created_at.desc())).all()

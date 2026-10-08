@@ -1,0 +1,1780 @@
+diff --git a/.env.example b/.env.example
+index a9e0c08..49dce20 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,6 +1,7 @@
+ # Runtime
+ LBOE_ENV=development
+ LBOE_LOG_LEVEL=INFO
++LBOE_DISPLAY_TIMEZONE=Africa/Johannesburg
+ LBOE_API_HOST=0.0.0.0
+ LBOE_API_PORT=8000
+ 
+@@ -47,3 +48,4 @@ LBOE_S3_SECRET_ACCESS_KEY=
+ LBOE_S3_REGION=auto
+ LBOE_SIGNED_URL_TTL_SECONDS=900
+ LBOE_LOG_LEVEL=INFO
++LBOE_DISPLAY_TIMEZONE=Africa/Johannesburg
+diff --git a/apps/api/src/lboe_api/config.py b/apps/api/src/lboe_api/config.py
+index b26e545..7611ff0 100644
+--- a/apps/api/src/lboe_api/config.py
++++ b/apps/api/src/lboe_api/config.py
+@@ -34,4 +34,6 @@ class Settings(BaseSettings):
+     s3_secret_access_key: str | None = None
+     s3_region: str = "auto"
+     signed_url_ttl_seconds: int = 900
++    # Operator-facing times are rendered in this IANA zone (storage stays UTC).
++    display_timezone: str = "Africa/Johannesburg"
+     model_config = SettingsConfigDict(env_prefix="LBOE_", extra="ignore")
+diff --git a/apps/api/src/lboe_api/db.py b/apps/api/src/lboe_api/db.py
+index e89dd8c..4049b42 100644
+--- a/apps/api/src/lboe_api/db.py
++++ b/apps/api/src/lboe_api/db.py
+@@ -10,13 +10,36 @@ from sqlalchemy import DateTime, Float, ForeignKey, String, Text, UniqueConstrai
+ from sqlalchemy.dialects.postgresql import JSONB
+ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+ from sqlalchemy.pool import StaticPool
+-from sqlalchemy.types import JSON
++from sqlalchemy.types import JSON, TypeDecorator
+ 
+ 
+ def utcnow() -> datetime:
+     return datetime.now(UTC)
+ 
+ 
++class UtcDateTime(TypeDecorator[datetime]):
++    """Timezone-aware UTC datetimes on every dialect.
++
++    Migrations created most timestamp columns as ``timestamp without time zone`` while the
++    models declare ``timezone=True``; SQLite keeps no offset at all. Normalising to UTC on
++    the way in and attaching UTC on the way out makes stored instants unambiguous, so a
++    follow-up due "09:00+02:00" is stored as 07:00 UTC and displayed as 09:00 SAST.
++    """
++
++    impl = DateTime(timezone=True)
++    cache_ok = True
++
++    def process_bind_param(self, value: datetime | None, dialect: Any) -> datetime | None:
++        if value is None:
++            return None
++        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
++
++    def process_result_value(self, value: datetime | None, dialect: Any) -> datetime | None:
++        if value is None:
++            return None
++        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
++
++
+ class Base(DeclarativeBase):
+     pass
+ 
+@@ -31,7 +54,7 @@ class Campaign(Base):
+     vertical: Mapped[str] = mapped_column(String(100))
+     geography: Mapped[str | None] = mapped_column(String(200), nullable=True)
+     policy: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class PilotRun(Base):
+@@ -52,10 +75,10 @@ class PilotRun(Base):
+     daily_manual_contact_cap: Mapped[int] = mapped_column()
+     daily_readiness_approval_cap: Mapped[int] = mapped_column()
+     created_by_operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+-    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
++    updated_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
++    activated_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
++    closed_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+ 
+ 
+ class PilotSourcePolicyAcknowledgement(Base):
+@@ -64,7 +87,7 @@ class PilotSourcePolicyAcknowledgement(Base):
+     pilot_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("pilot_runs.id"), index=True)
+     operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+     policy_version: Mapped[str] = mapped_column(String(80))
+-    acknowledged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    acknowledged_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+     acknowledgement_text: Mapped[str] = mapped_column(Text)
+ 
+ 
+@@ -84,8 +107,8 @@ class PilotRetrospective(Base):
+     reply_quality: Mapped[str] = mapped_column(Text, default="")
+     meeting_quality: Mapped[str] = mapped_column(Text, default="")
+     next_sprint_recommendation: Mapped[str] = mapped_column(Text, default="")
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
++    updated_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class PilotExportRun(Base):
+@@ -97,7 +120,7 @@ class PilotExportRun(Base):
+     files: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+     warnings: Mapped[list[Any]] = mapped_column(JsonType, default=list)
+     created_by_operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class Business(Base):
+@@ -114,8 +137,8 @@ class Business(Base):
+     normalized_phone: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
+     normalized_domain: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+     state: Mapped[str] = mapped_column(String(40), default="DISCOVERED", index=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
++    updated_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow, onupdate=utcnow)
+ 
+ 
+ class BusinessExternalIdentity(Base):
+@@ -125,7 +148,7 @@ class BusinessExternalIdentity(Base):
+     business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+     source: Mapped[str] = mapped_column(String(80))
+     source_id: Mapped[str] = mapped_column(String(300))
+-    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    observed_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+     confidence: Mapped[float] = mapped_column(Float)
+ 
+ 
+@@ -143,8 +166,8 @@ class SourceObservation(Base):
+     field: Mapped[str] = mapped_column(String(200))
+     source_type: Mapped[str] = mapped_column(String(80))
+     source_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
+-    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
++    observed_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
++    expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+     storage_policy: Mapped[str] = mapped_column(String(30))
+     confidence: Mapped[float] = mapped_column(Float)
+     value: Mapped[str | None] = mapped_column(Text, nullable=True)
+@@ -166,8 +189,8 @@ class EnrichmentRun(Base):
+     source_type: Mapped[str] = mapped_column(String(80))
+     status: Mapped[str] = mapped_column(String(40))
+     adapter_version: Mapped[str] = mapped_column(String(100))
+-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
++    started_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
++    completed_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+ 
+ 
+ class EnrichmentFactRow(Base):
+@@ -180,7 +203,7 @@ class EnrichmentFactRow(Base):
+     fact_type: Mapped[str] = mapped_column(String(100))
+     value: Mapped[str] = mapped_column(Text)
+     confidence: Mapped[float] = mapped_column(Float)
+-    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    observed_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+     evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+     policy: Mapped[str] = mapped_column(String(40), default="persistent")
+ 
+@@ -191,7 +214,7 @@ class SuppressionEntry(Base):
+     business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+     reason: Mapped[str] = mapped_column(String(500))
+     channel: Mapped[str | None] = mapped_column(String(30), nullable=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class PipelineEvent(Base):
+@@ -202,7 +225,7 @@ class PipelineEvent(Base):
+     to_state: Mapped[str] = mapped_column(String(40))
+     actor: Mapped[str] = mapped_column(String(100), default="system")
+     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class Job(Base):
+@@ -212,7 +235,7 @@ class Job(Base):
+     job_type: Mapped[str] = mapped_column(String(100))
+     status: Mapped[str] = mapped_column(String(30), default="queued")
+     payload: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class DedupeEvidence(Base):
+@@ -231,7 +254,7 @@ class DedupeEvidence(Base):
+     reason: Mapped[str] = mapped_column(String(500))
+     confidence: Mapped[float] = mapped_column(Float)
+     merged: Mapped[bool] = mapped_column(default=False)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class DiscoveryCandidate(Base):
+@@ -244,7 +267,7 @@ class DiscoveryCandidate(Base):
+     normalized_payload: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+     provenance: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+     dedupe_evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class Website(Base):
+@@ -256,7 +279,7 @@ class Website(Base):
+     final_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+     http_status: Mapped[int | None] = mapped_column(nullable=True)
+     resolution_status: Mapped[str] = mapped_column(String(40))
+-    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    checked_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class AuditRun(Base):
+@@ -265,8 +288,8 @@ class AuditRun(Base):
+     business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+     website_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("websites.id"), nullable=True, index=True)
+     auditor_version: Mapped[str] = mapped_column(String(100))
+-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
++    started_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
++    completed_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+     status: Mapped[str] = mapped_column(String(30), default="running", index=True)
+     error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+     technical_metadata: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+@@ -285,7 +308,7 @@ class AuditFinding(Base):
+     evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+     source_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+     confidence: Mapped[float] = mapped_column(Float)
+-    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    observed_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+     auditor_version: Mapped[str] = mapped_column(String(100))
+ 
+ 
+@@ -297,7 +320,7 @@ class AuditArtifact(Base):
+     path: Mapped[str] = mapped_column(String(1000))
+     mime_type: Mapped[str] = mapped_column(String(100))
+     byte_size: Mapped[int | None] = mapped_column(nullable=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class OpportunityScore(Base):
+@@ -309,7 +332,7 @@ class OpportunityScore(Base):
+     score: Mapped[int] = mapped_column()
+     band: Mapped[str] = mapped_column(String(20))
+     recommended_next_action: Mapped[str] = mapped_column(String(50))
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class OpportunityComponent(Base):
+@@ -345,7 +368,7 @@ class BusinessBrief(Base):
+     summary: Mapped[str] = mapped_column(Text)
+     recommended_next_action: Mapped[str] = mapped_column(String(50))
+     confidence: Mapped[float] = mapped_column(Float)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class BusinessBriefFact(Base):
+@@ -394,7 +417,7 @@ class GeneratedDemo(Base):
+     status: Mapped[str] = mapped_column(String(30), index=True)
+     preview_path: Mapped[str] = mapped_column(String(1000))
+     preview_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class GeneratedDemoSection(Base):
+@@ -435,7 +458,7 @@ class DemoQaRun(Base):
+     demo_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("generated_demos.id"), index=True)
+     status: Mapped[str] = mapped_column(String(30))
+     checks: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class DemoReview(Base):
+@@ -446,7 +469,7 @@ class DemoReview(Base):
+     decision: Mapped[str] = mapped_column(String(40))
+     reviewer: Mapped[str] = mapped_column(String(200))
+     notes: Mapped[str] = mapped_column(Text, default="")
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+     resulting_demo_status: Mapped[str] = mapped_column(String(40))
+     resulting_business_state: Mapped[str] = mapped_column(String(40))
+ 
+@@ -472,7 +495,7 @@ class OutreachDraftPackage(Base):
+     offer_type: Mapped[str] = mapped_column(String(60))
+     offer_angle: Mapped[str] = mapped_column(Text, default="")
+     status: Mapped[str] = mapped_column(String(30), index=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class OutreachDraftMessage(Base):
+@@ -508,7 +531,7 @@ class OutreachReadinessReview(Base):
+     consent_basis_type: Mapped[str] = mapped_column(String(60))
+     consent_basis_notes: Mapped[str] = mapped_column(Text, default="")
+     resulting_business_state: Mapped[str] = mapped_column(String(40))
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class OutreachChannelApproval(Base):
+@@ -545,11 +568,11 @@ class OutreachExecutionRecord(Base):
+     outreach_draft_message_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("outreach_draft_messages.id"), index=True)
+     channel: Mapped[str] = mapped_column(String(30))
+     operator: Mapped[str] = mapped_column(String(200))
+-    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
++    sent_at: Mapped[datetime] = mapped_column(UtcDateTime())
+     external_reference: Mapped[str | None] = mapped_column(String(500), nullable=True)
+     notes: Mapped[str] = mapped_column(Text, default="")
+     evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+     resulting_business_state: Mapped[str] = mapped_column(String(40))
+ 
+ 
+@@ -563,7 +586,7 @@ class LeadCrmEvent(Base):
+     event_type: Mapped[str] = mapped_column(String(40))
+     channel: Mapped[str] = mapped_column(String(30))
+     operator: Mapped[str] = mapped_column(String(200))
+-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
++    occurred_at: Mapped[datetime] = mapped_column(UtcDateTime())
+     summary: Mapped[str] = mapped_column(Text, default="")
+     notes: Mapped[str] = mapped_column(Text, default="")
+     next_step: Mapped[str | None] = mapped_column(Text, nullable=True)
+@@ -571,7 +594,7 @@ class LeadCrmEvent(Base):
+     objection_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
+     evidence: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+     resulting_business_state: Mapped[str] = mapped_column(String(40))
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class ManualFollowUpTask(Base):
+@@ -580,10 +603,10 @@ class ManualFollowUpTask(Base):
+     business_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("businesses.id"), index=True)
+     operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+     reason: Mapped[str] = mapped_column(Text)
+-    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
++    due_at: Mapped[datetime] = mapped_column(UtcDateTime())
+     status: Mapped[str] = mapped_column(String(30), default="open")
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
++    completed_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+ 
+ 
+ class OutreachObjection(Base):
+@@ -593,7 +616,7 @@ class OutreachObjection(Base):
+     operator: Mapped[str] = mapped_column(String(200))
+     code: Mapped[str] = mapped_column(String(40))
+     notes: Mapped[str] = mapped_column(Text, default="")
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class ProposalPackage(Base):
+@@ -608,7 +631,7 @@ class ProposalPackage(Base):
+     proposal_type: Mapped[str] = mapped_column(String(60))
+     status: Mapped[str] = mapped_column(String(40), index=True)
+     summary: Mapped[str] = mapped_column(Text, default="")
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class ProposalSection(Base):
+@@ -651,7 +674,7 @@ class ProposalReviewEvent(Base):
+     reviewer: Mapped[str] = mapped_column(String(200))
+     notes: Mapped[str] = mapped_column(Text, default="")
+     checks: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class ProposalExport(Base):
+@@ -660,7 +683,7 @@ class ProposalExport(Base):
+     proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposal_packages.id"), index=True)
+     status: Mapped[str] = mapped_column(String(30))
+     files: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class DeliveryProject(Base):
+@@ -673,9 +696,9 @@ class DeliveryProject(Base):
+     title: Mapped[str] = mapped_column(String(300))
+     summary: Mapped[str] = mapped_column(Text, default="")
+     created_by_operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
++    updated_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow, onupdate=utcnow)
++    closed_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+ 
+ 
+ class DeliveryChecklistItem(Base):
+@@ -686,7 +709,7 @@ class DeliveryChecklistItem(Base):
+     code: Mapped[str] = mapped_column(String(100))
+     status: Mapped[str] = mapped_column(String(30), default="pending")
+     notes: Mapped[str] = mapped_column(Text, default="")
+-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
++    updated_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow, onupdate=utcnow)
+ 
+ 
+ class DeliveryMilestone(Base):
+@@ -697,8 +720,8 @@ class DeliveryMilestone(Base):
+     status: Mapped[str] = mapped_column(String(30))
+     operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+     note: Mapped[str] = mapped_column(Text, default="")
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
++    completed_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+ 
+ 
+ class DeliveryApproval(Base):
+@@ -710,7 +733,7 @@ class DeliveryApproval(Base):
+     operator_notes: Mapped[str] = mapped_column(Text, default="")
+     client_assertion: Mapped[str] = mapped_column(Text, default="")
+     artifact_reference: Mapped[str | None] = mapped_column(Text, nullable=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class DeliveryExport(Base):
+@@ -719,7 +742,7 @@ class DeliveryExport(Base):
+     delivery_project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("delivery_projects.id"), index=True)
+     status: Mapped[str] = mapped_column(String(30))
+     files: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class Operator(Base):
+@@ -729,7 +752,7 @@ class Operator(Base):
+     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+     role: Mapped[str] = mapped_column(String(30), default="operator")
+     active: Mapped[bool] = mapped_column(default=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class OperatorSession(Base):
+@@ -738,9 +761,9 @@ class OperatorSession(Base):
+     operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+     session_hash: Mapped[str] = mapped_column(String(128), index=True)
+     csrf_hash: Mapped[str] = mapped_column(String(128))
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
++    expires_at: Mapped[datetime] = mapped_column(UtcDateTime())
++    revoked_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+ 
+ 
+ class OperatorAssignment(Base):
+@@ -750,8 +773,8 @@ class OperatorAssignment(Base):
+     operator_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("operators.id"), index=True)
+     assigned_by_operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+     status: Mapped[str] = mapped_column(String(30), default="assigned")
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
++    updated_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class OperatorComment(Base):
+@@ -761,7 +784,7 @@ class OperatorComment(Base):
+     operator_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("operators.id"), index=True)
+     comment_type: Mapped[str] = mapped_column(String(30), default="general")
+     body: Mapped[str] = mapped_column(Text)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class OperatorAuditEvent(Base):
+@@ -775,7 +798,7 @@ class OperatorAuditEvent(Base):
+     before_data: Mapped[dict[str, Any] | None] = mapped_column(JsonType, nullable=True)
+     after_data: Mapped[dict[str, Any] | None] = mapped_column(JsonType, nullable=True)
+     event_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JsonType, default=dict)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+ 
+ 
+ class DemoPreviewLink(Base):
+@@ -787,17 +810,17 @@ class DemoPreviewLink(Base):
+     label: Mapped[str] = mapped_column(String(200), default="Concept preview")
+     permission: Mapped[str] = mapped_column(String(30), default="external_view")
+     status: Mapped[str] = mapped_column(String(30), default="active")
+-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
++    expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+     created_by_operator_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("operators.id"), nullable=True)
+-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
++    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
++    revoked_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+ 
+ 
+ class DemoPreviewAccessEvent(Base):
+     __tablename__ = "demo_preview_access_events"
+     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+     preview_link_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("demo_preview_links.id"), index=True)
+-    accessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
++    accessed_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utcnow)
+     ip_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+     user_agent_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+     outcome: Mapped[str] = mapped_column(String(40))
+@@ -808,6 +831,9 @@ def make_engine(database_url: str) -> Any:
+     kwargs: dict[str, Any] = {"pool_pre_ping": True, "future": True}
+     if database_url.startswith("sqlite"):
+         kwargs.update({"connect_args": {"check_same_thread": False}, "poolclass": StaticPool})
++    elif database_url.startswith("postgresql"):
++        # timestamp-without-time-zone columns are converted using the session zone; pin it.
++        kwargs["connect_args"] = {"options": "-c timezone=UTC"}
+     return create_engine(database_url, **kwargs)
+ 
+ 
+diff --git a/apps/api/src/lboe_api/demo_generator.py b/apps/api/src/lboe_api/demo_generator.py
+index b238a15..0979af5 100644
+--- a/apps/api/src/lboe_api/demo_generator.py
++++ b/apps/api/src/lboe_api/demo_generator.py
+@@ -52,12 +52,19 @@ class RenderedDemo:
+     metadata: dict[str, Any]
+     sections: list[DemoSection]
+     claims: list[DemoClaim]
++    # Verified business facts rendered verbatim. QA rules about *generated* marketing copy
++    # (prices, superlatives, testimonials) must not fire on the business's own name/address.
++    verified_values: tuple[str, ...] = ()
+ 
+ 
+ def _fact(facts: list[dict[str, Any]], label: str) -> dict[str, Any] | None:
+     return next((item for item in facts if item.get("label") == label), None)
+ 
+ 
++def _anchor(section_type: str) -> str:
++    return section_type.replace("_", "-")
++
++
+ def render_demo(
+     demo_id: uuid.UUID,
+     business: Any,
+@@ -67,7 +74,10 @@ def render_demo(
+     facts = [fact for values in brief.get("facts", {}).values() for fact in values]
+     name = str(business.display_name)
+     category = str(business.category or "local business")
+-    address_fact = _fact(facts, "address")
++    # Briefs label the address "Address/locality"; accept the legacy "address" label too.
++    address_fact = _fact(facts, "Address/locality") or _fact(facts, "address")
++    if address_fact is not None and not address_fact.get("value"):
++        address_fact = None
+     phone_fact = _fact(facts, "phone")
+     location = str(address_fact["value"]) if address_fact else (business.locality or "your local area")
+     phone = str(phone_fact["value"]) if phone_fact else ""
+@@ -143,22 +153,11 @@ def render_demo(
+         ),
+     ]
+     section_html = "\n".join(
+-        f'<section class="{html.escape(section.section_type)}"><h2>{html.escape(section.heading)}</h2>'
+-        f"<p>{html.escape(section.body)}</p></section>"
++        f'<section class="{html.escape(section.section_type)}" id="{html.escape(_anchor(section.section_type))}">'
++        f"<h2>{html.escape(section.heading)}</h2><p>{html.escape(section.body)}</p></section>"
+         for section in sections
+     )
+     page_title = f"{html.escape(name)} — concept preview"
+-    page = (
+-        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+-        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+-        f'<title>{page_title}</title><link rel="stylesheet" href="styles.css"></head>'
+-        f'<body><main><header><p class="eyebrow">Independent concept preview</p>'
+-        f"<h1>{html.escape(name)}</h1><p>{html.escape(category)} concept for {html.escape(location)}.</p>"
+-        '<nav><a href="#booking">Booking placeholder</a> <a href="#whatsapp">WhatsApp placeholder</a>'
+-        '<a href="#call">Call placeholder</a></nav></header>'
+-        f"{section_html}<footer><p>Concept preview prepared independently for demonstration. "
+-        "Not the official website of this business.</p></footer></main></body></html>"
+-    )
+     css = (
+         ":root{font-family:system-ui,sans-serif;color:#17202a;background:#f8f5f0}"
+         "body{margin:0}main{max-width:960px;margin:auto;padding:2rem}"
+@@ -166,14 +165,28 @@ def render_demo(
+         "a{display:inline-block;margin:.25rem;padding:.65rem 1rem;border:1px solid #52616b;"
+         "border-radius:999px;color:#17202a}"
+         ".eyebrow{letter-spacing:.08em;text-transform:uppercase;font-size:.8rem}"
++        ".concept_banner,.concept-banner{background:#fff4cc;border:2px solid #8a6d00}"
+         "@media(max-width:600px){main{padding:1rem}h1{font-size:2rem}a{display:block;text-align:center}}"
+     )
++    page = (
++        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
++        '<meta name="viewport" content="width=device-width, initial-scale=1">'
++        '<meta name="robots" content="noindex, nofollow">'
++        f"<title>{page_title}</title><style>{css}</style></head>"
++        f'<body><main><header><p class="eyebrow">Independent concept preview</p>'
++        f"<h1>{html.escape(name)}</h1><p>{html.escape(category)} concept for {html.escape(location)}.</p>"
++        '<nav aria-label="Concept sections"><a href="#primary-cta">Booking or WhatsApp (to be confirmed)</a> '
++        '<a href="#location-contact">Location and contact</a></nav></header>'
++        f"{section_html}<footer><p>Concept preview prepared independently for demonstration. "
++        "Not the official website of this business.</p></footer></main></body></html>"
++    )
+     return RenderedDemo(
+         html=page,
+         css=css,
+         metadata={"demo_id": str(demo_id), "version": VERSION, "demo_type": demo_type, "business_id": str(business.id)},
+         sections=sections,
+         claims=claims,
++        verified_values=tuple(value for value in (name, category, location, phone) if value),
+     )
+ 
+ 
+@@ -198,22 +211,31 @@ def write_artifacts(root: Path, demo_id: uuid.UUID, rendered: RenderedDemo) -> l
+ def qa_demo(root: Path, demo_id: uuid.UUID, rendered: RenderedDemo) -> tuple[str, dict[str, bool]]:
+     directory = root / "demos" / str(demo_id)
+     content = (directory / "index.html").read_text(encoding="utf-8")
+-    lowered = content.lower()
++    # Compare against the text a visitor sees (entities decoded), so "&" and "'" in a
++    # business name no longer fail the name check.
++    lowered = html.unescape(re.sub(r"<style>.*?</style>", " ", content, flags=re.S)).lower()
++    # Copy rules target LBOE-generated marketing text. Verified facts (name, category,
++    # address, phone) are the business's own words and are removed before those rules run,
++    # otherwise "Hair 2 Go", "Floor 1" or "concept for 12 Kloof Street" read as prices.
++    generated = lowered
++    for value in sorted(rendered.verified_values, key=len, reverse=True):
++        generated = generated.replace(value.lower(), " ")
+     checks: dict[str, bool] = {
+         "concept_banner_present": "concept preview prepared independently" in lowered,
+         "business_name_present": bool(rendered.claims and rendered.claims[0].claim_text.lower() in lowered),
+-        "prohibited_phrases_absent": not any(phrase in lowered for phrase in PROHIBITED),
+-        "official_site_claim_absent": not re.search(r"(?<!not the )official website", lowered),
+-        "no_fake_testimonials": "testimonial" not in lowered and "review quote" not in lowered,
+-        "no_fake_prices": not re.search(r"(?:\$|r)\s?\d+", lowered),
++        "prohibited_phrases_absent": not any(phrase in generated for phrase in PROHIBITED),
++        "official_site_claim_absent": not re.search(r"(?<!not the )official website", generated),
++        "no_fake_testimonials": "testimonial" not in generated and "review quote" not in generated,
++        "no_fake_prices": not re.search(r"(?:\$|\br)\s?\d+", generated),
+         "claims_have_evidence": all(
+             claim.evidence or claim.claim_type in {"generic", "placeholder"} for claim in rendered.claims
+         ),
+         "html_exists": (directory / "index.html").is_file(),
+         "css_exists": (directory / "styles.css").is_file(),
+         "metadata_exists": (directory / "metadata.json").is_file(),
+-        "no_external_forms": "<form" not in lowered,
+-        "no_external_tracking": "<script" not in lowered,
++        # Markup checks run on the raw HTML: an escaped "<script>" in a name is text, not a tag.
++        "no_external_forms": "<form" not in content.lower(),
++        "no_external_tracking": "<script" not in content.lower(),
+     }
+     return ("passed" if all(checks.values()) else "failed", checks)
+ 
+diff --git a/apps/api/src/lboe_api/main.py b/apps/api/src/lboe_api/main.py
+index 9ab0727..b2de15a 100644
+--- a/apps/api/src/lboe_api/main.py
++++ b/apps/api/src/lboe_api/main.py
+@@ -2880,6 +2880,15 @@ def list_proposal_exports(proposal_id: uuid.UUID, session: Session = Depends(db_
+     ]
+ 
+ 
++from fastapi.exceptions import RequestValidationError  # noqa: E402
++from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
++
++from .ui.presentation import ui_http_exception_handler, ui_validation_exception_handler  # noqa: E402
+ from .ui.routes import router as ui_router  # noqa: E402
++from .ui.workflow import router as ui_workflow_router  # noqa: E402
+ 
+ app.include_router(ui_router)  # type: ignore[has-type]
++app.include_router(ui_workflow_router)  # type: ignore[has-type]
++# /ui and /preview errors render as pages; /v1 keeps FastAPI's JSON error bodies.
++app.add_exception_handler(StarletteHTTPException, ui_http_exception_handler)
++app.add_exception_handler(RequestValidationError, ui_validation_exception_handler)
+diff --git a/apps/api/src/lboe_api/static/ui.css b/apps/api/src/lboe_api/static/ui.css
+index e17a3bb..ff2fa9d 100644
+--- a/apps/api/src/lboe_api/static/ui.css
++++ b/apps/api/src/lboe_api/static/ui.css
+@@ -1,7 +1,32 @@
+-:root{--ink:#14213d;--ink-2:#25345a;--paper:#f5f6f1;--card:#fff;--line:#dfe4dc;--muted:#6d7788;--lime:#d9f75b;--lime-2:#b9dc38;--coral:#ff795f;--blue:#5672e8;--shadow:0 16px 45px rgba(20,33,61,.08)}
+-*{box-sizing:border-box}html{background:var(--paper)}body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--paper);line-height:1.5}a{color:inherit}header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:28px;padding:18px clamp(20px,5vw,72px);background:var(--ink);color:#fff;box-shadow:0 3px 18px rgba(20,33,61,.16)}header>a{font-size:1.08rem;letter-spacing:-.02em;text-decoration:none}nav{display:flex;gap:18px;align-items:center;flex-wrap:wrap}nav a{font-size:.84rem;color:#cbd4e7;text-decoration:none;transition:color .18s}nav a:hover,nav a:focus{color:var(--lime)}main{max-width:1380px;margin:0 auto;padding:34px clamp(20px,5vw,72px) 80px}.safety{background:var(--lime);color:var(--ink);padding:10px clamp(20px,5vw,72px);font-size:.82rem;font-weight:700;letter-spacing:.01em}.muted{color:var(--muted);font-size:.84rem}.muted a{color:var(--blue)}h1,h2,h3{letter-spacing:-.035em;line-height:1.1}h1{font-size:clamp(2rem,4vw,3.6rem);margin:10px 0 22px}h2{font-size:1.35rem;margin:0 0 14px}h3{font-size:1rem;margin:22px 0 10px}.hero{display:grid;grid-template-columns:1.25fr .75fr;gap:28px;align-items:end;margin-bottom:28px}.hero-copy{max-width:700px}.eyebrow{font-size:.74rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--coral);margin-bottom:10px}.hero-copy p{font-size:1.06rem;color:var(--muted);max-width:650px}.hero-actions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:12px;margin:18px 0 28px}.card{display:flex;flex-direction:column;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:var(--shadow);text-decoration:none;color:inherit;transition:transform .18s,box-shadow .18s}.card:hover{transform:translateY(-2px);box-shadow:0 20px 50px rgba(20,33,61,.13)}.card span{font-size:.72rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}.card b{font-size:2rem;letter-spacing:-.05em}.layout-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px;align-items:start}.section{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:var(--shadow);margin:18px 0}.section-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:16px}.map-shell{position:relative;min-height:350px;overflow:hidden;border-radius:16px;background:#d8e7dd;border:1px solid #c5d5c9}.map-iframe{display:block;width:100%;height:350px;border:0;filter:saturate(.82) contrast(.98)}.map-overlay{position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(20,33,61,.08),transparent 32%,transparent 70%,rgba(20,33,61,.2))}.map-label{position:absolute;left:22px;top:18px;z-index:2;padding:8px 10px;border-radius:9px;background:rgba(255,255,255,.92);backdrop-filter:blur(6px);font-size:.75rem;font-weight:800;color:var(--ink)}.map-open{position:absolute;right:16px;bottom:15px;pointer-events:auto;background:var(--ink);color:#fff}.map-leads{margin-top:14px;padding:2px}.map-leads h3{margin:0 0 2px}.map-lead-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.map-lead{display:grid;grid-template-columns:10px 1fr;column-gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px;text-decoration:none;background:#fbfcf8}.map-lead:hover{border-color:var(--blue);background:#f1f4ff}.map-lead small{grid-column:2;color:var(--muted);font-size:.72rem}.map-dot{width:8px;height:8px;border-radius:50%;background:var(--coral);grid-row:1 / span 2}.map-lead:nth-child(2n) .map-dot{background:var(--blue)}.button,button{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:0;border-radius:10px;padding:11px 15px;background:var(--ink);color:#fff;text-decoration:none;font:inherit;font-weight:750;cursor:pointer;transition:transform .16s,background .16s}.button:hover,button:hover{background:var(--ink-2);transform:translateY(-1px)}.button-primary{background:var(--lime);color:var(--ink)}.button-primary:hover{background:var(--lime-2)}.button-secondary{background:#e9edf5;color:var(--ink)}.button-small{padding:8px 10px;font-size:.78rem}.notice{background:#eef8d5;border:1px solid #c9e27a;padding:14px 16px;border-radius:12px}.warning{background:#fff0ea;border:1px solid #ffc4b6;color:#853b2c;padding:14px 16px;border-radius:12px}.badge{display:inline-flex;align-items:center;gap:6px;background:#edf0f8;color:#334875;padding:5px 9px;border-radius:999px;font-size:.75rem;font-weight:800}.badge:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--blue)}table{width:100%;border-collapse:separate;border-spacing:0;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:16px 0;box-shadow:var(--shadow)}th,td{padding:13px 14px;border-bottom:1px solid #edf0eb;text-align:left;vertical-align:top;font-size:.88rem}th{background:#f1f3ee;color:var(--muted);font-size:.7rem;letter-spacing:.08em;text-transform:uppercase}tr:last-child td{border-bottom:0}tr:hover td{background:#fbfcf8}.table-primary{display:block;font-weight:800;text-decoration:none}.table-primary:hover{text-decoration:underline}.table-sub{display:block;margin-top:3px;color:var(--muted);font-size:.72rem}input,textarea,select{font:inherit;padding:11px 12px;margin:4px 4px 4px 0;border:1px solid #cbd3c8;border-radius:9px;background:#fff;color:var(--ink)}input:focus,textarea:focus,select:focus,button:focus,a:focus{outline:3px solid rgba(217,247,91,.75);outline-offset:2px}textarea{display:block;width:100%;min-height:100px}.queue-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}.queue-grid .card{min-height:125px}.empty-state{padding:28px;text-align:center;color:var(--muted);border:1px dashed #cbd3c8;border-radius:14px;background:#fbfcf8}.success{color:#27613b;background:#edf8ef;border:1px solid #b8dfbf;padding:12px;border-radius:10px}code,pre{display:block;background:#121c35;color:#dff3c3;padding:16px;border-radius:10px;overflow:auto}pre{white-space:pre-wrap}.sidebar-layout{display:grid;grid-template-columns:220px 1fr;gap:26px}.side-nav{position:sticky;top:100px;align-self:start}.side-nav a{display:block;padding:10px 12px;border-radius:9px;text-decoration:none;color:var(--muted)}.side-nav a:hover{background:#e9eddc;color:var(--ink)}.stat-line{display:flex;justify-content:space-between;gap:20px;border-bottom:1px solid #edf0eb;padding:11px 0}.stat-line:last-child{border-bottom:0}.next-action{display:flex;justify-content:space-between;align-items:center;gap:24px;padding:22px 24px;margin:0 0 28px;border-radius:16px;background:var(--ink);color:#fff;box-shadow:var(--shadow)}.next-action h2{margin:3px 0 5px;color:#fff}.next-action p{margin:0;color:#cbd4e7;max-width:700px}.next-action .eyebrow{color:var(--lime)}.page-intro{display:flex;justify-content:space-between;align-items:end;margin-bottom:20px}.create-panel{display:flex;justify-content:space-between;align-items:end;gap:24px}.create-panel form{display:flex;flex-wrap:wrap;justify-content:flex-end}@media(max-width:850px){header{align-items:flex-start;flex-direction:column;gap:10px}nav{gap:11px}.hero,.layout-grid,.sidebar-layout{grid-template-columns:1fr}.hero-actions{justify-content:flex-start}.side-nav{position:static;display:flex;overflow:auto}.side-nav a{white-space:nowrap}main{padding-top:24px}.map-shell{min-height:260px}.map-iframe{height:260px}.next-action,.create-panel{align-items:flex-start;flex-direction:column}.create-panel form{justify-content:flex-start;width:100%}table{display:block;overflow-x:auto;white-space:nowrap}}
++:root{--ink:#14213d;--ink-2:#25345a;--paper:#f5f6f1;--card:#fff;--line:#dfe4dc;--muted:#636c7b;--lime:#d9f75b;--lime-2:#b9dc38;--coral:#ff795f;--coral-ink:#aa513f;--blue:#4b64cc;--shadow:0 16px 45px rgba(20,33,61,.08)}
++*{box-sizing:border-box}html{background:var(--paper)}body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--paper);line-height:1.5}a{color:inherit}header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:28px;padding:18px clamp(20px,5vw,72px);background:var(--ink);color:#fff;box-shadow:0 3px 18px rgba(20,33,61,.16)}header>a{font-size:1.08rem;letter-spacing:-.02em;text-decoration:none}header nav{display:flex;gap:6px 10px;align-items:center;flex-wrap:wrap}header nav a{display:inline-flex;align-items:center;min-height:32px;padding:4px 6px;font-size:.84rem;color:#cbd4e7;text-decoration:none;transition:color .18s}header nav a:hover,header nav a:focus{color:var(--lime)}main{max-width:1380px;margin:0 auto;padding:34px clamp(20px,5vw,72px) 80px}.safety{background:var(--lime);color:var(--ink);padding:10px clamp(20px,5vw,72px);font-size:.82rem;font-weight:700;letter-spacing:.01em}.muted{color:var(--muted);font-size:.84rem}.muted a{color:var(--blue)}h1,h2,h3{letter-spacing:-.035em;line-height:1.1}h1{font-size:clamp(2rem,4vw,3.6rem);margin:10px 0 22px}h2{font-size:1.35rem;margin:0 0 14px}h3{font-size:1rem;margin:22px 0 10px}.hero{display:grid;grid-template-columns:1.25fr .75fr;gap:28px;align-items:end;margin-bottom:28px}.hero-copy{max-width:700px}.eyebrow{font-size:.74rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--coral-ink);margin-bottom:10px}.hero-copy p{font-size:1.06rem;color:var(--muted);max-width:650px}.hero-actions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:12px;margin:18px 0 28px}.card{display:flex;flex-direction:column;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:var(--shadow);text-decoration:none;color:inherit;transition:transform .18s,box-shadow .18s}.card:hover{transform:translateY(-2px);box-shadow:0 20px 50px rgba(20,33,61,.13)}.card span{font-size:.72rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}.card b{font-size:2rem;letter-spacing:-.05em}.layout-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px;align-items:start}.section{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:var(--shadow);margin:18px 0}.section-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:16px}.map-shell{position:relative;min-height:350px;overflow:hidden;border-radius:16px;background:#d8e7dd;border:1px solid #c5d5c9}.map-iframe{display:block;width:100%;height:350px;border:0;filter:saturate(.82) contrast(.98)}.map-overlay{position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(20,33,61,.08),transparent 32%,transparent 70%,rgba(20,33,61,.2))}.map-label{position:absolute;left:22px;top:18px;z-index:2;padding:8px 10px;border-radius:9px;background:rgba(255,255,255,.92);backdrop-filter:blur(6px);font-size:.75rem;font-weight:800;color:var(--ink)}.map-open{position:absolute;right:16px;bottom:15px;pointer-events:auto;background:var(--ink);color:#fff}.map-leads{margin-top:14px;padding:2px}.map-leads h3{margin:0 0 2px}.map-lead-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.map-lead{display:grid;grid-template-columns:10px 1fr;column-gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px;text-decoration:none;background:#fbfcf8}.map-lead:hover{border-color:var(--blue);background:#f1f4ff}.map-lead small{grid-column:2;color:var(--muted);font-size:.72rem}.map-dot{width:8px;height:8px;border-radius:50%;background:var(--coral);grid-row:1 / span 2}.map-lead:nth-child(2n) .map-dot{background:var(--blue)}.button,button{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:0;border-radius:10px;padding:11px 15px;background:var(--ink);color:#fff;text-decoration:none;font:inherit;font-weight:750;cursor:pointer;transition:transform .16s,background .16s}.button:hover,button:hover{background:var(--ink-2);transform:translateY(-1px)}.button-primary{background:var(--lime);color:var(--ink)}.button-primary:hover{background:var(--lime-2)}.button-secondary{background:#e9edf5;color:var(--ink)}.button-small{padding:8px 10px;font-size:.78rem}.notice{background:#eef8d5;border:1px solid #c9e27a;padding:14px 16px;border-radius:12px}.warning{background:#fff0ea;border:1px solid #ffc4b6;color:#853b2c;padding:14px 16px;border-radius:12px}.badge{display:inline-flex;align-items:center;gap:6px;background:#edf0f8;color:#334875;padding:5px 9px;border-radius:999px;font-size:.75rem;font-weight:800}.badge:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--blue)}table{width:100%;border-collapse:separate;border-spacing:0;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:16px 0;box-shadow:var(--shadow)}th,td{padding:13px 14px;border-bottom:1px solid #edf0eb;text-align:left;vertical-align:top;font-size:.88rem}th{background:#f1f3ee;color:var(--muted);font-size:.7rem;letter-spacing:.08em;text-transform:uppercase}tr:last-child td{border-bottom:0}tr:hover td{background:#fbfcf8}.table-primary{display:block;font-weight:800;text-decoration:none}.table-primary:hover{text-decoration:underline}.table-sub{display:block;margin-top:3px;color:var(--muted);font-size:.72rem}input,textarea,select{font:inherit;padding:11px 12px;margin:4px 4px 4px 0;border:1px solid #cbd3c8;border-radius:9px;background:#fff;color:var(--ink)}input:focus,textarea:focus,select:focus,button:focus,a:focus{outline:3px solid rgba(217,247,91,.75);outline-offset:2px}textarea{display:block;width:100%;min-height:100px}.queue-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}.queue-grid .card{min-height:125px}.empty-state{padding:28px;text-align:center;color:var(--muted);border:1px dashed #cbd3c8;border-radius:14px;background:#fbfcf8}.success{color:#27613b;background:#edf8ef;border:1px solid #b8dfbf;padding:12px;border-radius:10px}code,pre{display:block;background:#121c35;color:#dff3c3;padding:16px;border-radius:10px;overflow:auto}pre{white-space:pre-wrap}.sidebar-layout{display:grid;grid-template-columns:220px 1fr;gap:26px}.side-nav{position:sticky;top:100px;align-self:start}.side-nav a{display:block;padding:10px 12px;border-radius:9px;text-decoration:none;color:var(--muted)}.side-nav a:hover{background:#e9eddc;color:var(--ink)}.stat-line{display:flex;justify-content:space-between;gap:20px;border-bottom:1px solid #edf0eb;padding:11px 0}.stat-line:last-child{border-bottom:0}.next-action{display:flex;justify-content:space-between;align-items:center;gap:24px;padding:22px 24px;margin:0 0 28px;border-radius:16px;background:var(--ink);color:#fff;box-shadow:var(--shadow)}.next-action h2{margin:3px 0 5px;color:#fff}.next-action p{margin:0;color:#cbd4e7;max-width:700px}.next-action .eyebrow{color:var(--lime)}.page-intro{display:flex;justify-content:space-between;align-items:end;margin-bottom:20px}.create-panel{display:flex;justify-content:space-between;align-items:end;gap:24px}.create-panel form{display:flex;flex-wrap:wrap;justify-content:flex-end}@media(max-width:850px){header{align-items:flex-start;flex-direction:column;gap:10px}header nav{gap:4px 8px}.hero,.layout-grid,.sidebar-layout{grid-template-columns:1fr}.hero-actions{justify-content:flex-start}.side-nav{position:static;display:flex;overflow:auto}.side-nav a{white-space:nowrap}main{padding-top:24px}.map-shell{min-height:260px}.map-iframe{height:260px}.next-action,.create-panel{align-items:flex-start;flex-direction:column}.create-panel form{justify-content:flex-start;width:100%}table{display:block;overflow-x:auto;white-space:nowrap}}
+  .detail-disclosure{margin-top:18px;border-top:1px solid var(--line);padding-top:14px}.detail-disclosure summary{cursor:pointer;font-weight:800;color:var(--ink-2)}.score-breakdown{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}.score-breakdown>div{padding:12px;border:1px solid var(--line);border-radius:10px;background:#fbfcf8}.score-breakdown span,.score-breakdown strong{display:block}.score-breakdown span{font-size:.72rem;color:var(--muted)}.score-breakdown strong{font-size:1.2rem;margin-top:4px}.component-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px;padding:0;list-style:none}.component-list li{display:flex;flex-direction:column;gap:3px;padding:11px 13px;border:1px solid var(--line);border-radius:10px;background:#fbfcf8}.component-list li span{font-weight:800;color:var(--blue)}.component-list li small{color:var(--muted)}@media(max-width:650px){.score-breakdown{grid-template-columns:repeat(2,1fr)}}
+  .opportunity-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin:18px 0}.opportunity-card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:var(--shadow);display:flex;flex-direction:column;min-height:300px}.opportunity-card h2{margin:14px 0 4px}.opportunity-card h2 a{text-decoration:none}.opportunity-card h2 a:hover{text-decoration:underline}.opportunity-card-top{display:flex;justify-content:space-between;align-items:center;gap:12px}.opportunity-score{font-size:.78rem;font-weight:800;color:var(--ink-2)}.opportunity-offer{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:12px 0;padding:12px;border-radius:10px;background:#f1f5e8;border:1px solid #dce7c5}.opportunity-offer span{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:800}.opportunity-offer strong{font-size:.9rem}.opportunity-card h3{font-size:.86rem;margin:14px 0 6px}.opportunity-reasons{list-style:none;padding:0;margin:0;color:var(--ink-2);font-size:.86rem}.opportunity-reasons li{padding:3px 0}.opportunity-blocker{margin-top:12px;padding:10px;border-radius:9px;background:#fff0ea;color:#853b2c;font-size:.8rem}.opportunity-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto;padding-top:18px}.opportunity-safety{margin-top:16px}.opportunity-card .badge{font-size:.7rem}
+  .opportunity-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin:18px 0}.opportunity-card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:var(--shadow);display:flex;flex-direction:column;min-height:300px}.opportunity-card h2{margin:14px 0 4px}.opportunity-card h2 a{text-decoration:none}.opportunity-card h2 a:hover{text-decoration:underline}.opportunity-card-top{display:flex;justify-content:space-between;align-items:center;gap:12px}.opportunity-score{font-size:.78rem;font-weight:800;color:var(--ink-2)}.opportunity-offer{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:12px 0;padding:12px;border-radius:10px;background:#f1f5e8;border:1px solid #dce7c5}.opportunity-offer span{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:800}.opportunity-offer strong{font-size:.9rem}.opportunity-card h3{font-size:.86rem;margin:14px 0 6px}.opportunity-reasons{list-style:none;padding:0;margin:0;color:var(--ink-2);font-size:.86rem}.opportunity-reasons li{padding:3px 0}.opportunity-blocker{margin-top:12px;padding:10px;border-radius:9px;background:#fff0ea;color:#853b2c;font-size:.8rem}.opportunity-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto;padding-top:18px}.opportunity-safety{margin-top:16px}.opportunity-card .badge{font-size:.7rem}.competitor-evidence{margin-top:12px;padding:10px 12px;border-left:3px solid var(--blue);background:#f1f4ff;color:var(--ink-2);font-size:.8rem}.competitor-evidence strong{display:block;margin-bottom:3px}.competitor-evidence ul{padding-left:18px;margin:0}
+ :root{--map-marker:#f26f5b}
+ .map-marker-layer{position:absolute;inset:0;z-index:3;pointer-events:none}.map-marker{position:absolute;display:flex;align-items:center;gap:6px;transform:translate(-8px,-8px);pointer-events:auto;text-decoration:none}.map-marker span{display:grid;place-items:center;width:24px;height:24px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:var(--map-marker);color:#fff;font-size:.72rem;font-weight:800;box-shadow:0 3px 12px rgba(20,33,61,.3)}.map-marker strong{display:none;background:rgba(20,33,61,.92);color:#fff;border-radius:7px;padding:4px 7px;font-size:.7rem;white-space:nowrap}.map-marker:hover strong,.map-marker:focus strong{display:block}.map-data-note{position:absolute;left:16px;top:16px;z-index:3;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.92);font-size:.72rem;color:var(--ink)}
++
++/* --- Audit fixes: accessibility and workflow (LBOE-AUD-114..121) --- */
++.skip-link{position:absolute;left:12px;top:-60px;z-index:50;padding:10px 14px;border-radius:10px;background:var(--lime);color:var(--ink);font-weight:800}
++.skip-link:focus{top:12px}
++main:focus{outline:none}
++.brand{color:#fff;text-decoration:none}
++.breadcrumb{margin:0 0 10px}
++.table-scroll{position:relative;overflow-x:auto;max-width:100%;margin:16px 0}
++.table-scroll table{margin:0;display:table;overflow:visible}
++.table-primary{display:flex;align-items:center;min-height:24px}
++.visually-hidden{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
++.pager{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px}
++label.field{display:grid;gap:4px;margin:0 0 12px;font-weight:700;font-size:.86rem}
++label.field span{color:var(--ink)}
++label.check{display:flex;gap:8px;align-items:center;min-height:32px;font-weight:500}
++label.check input{width:24px;height:24px}
++.hint{font-weight:400;color:var(--muted)}
++fieldset{border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin:0 0 12px}
++legend{font-weight:800;padding:0 6px}
++.workflow-step{border-top:1px solid var(--line);padding-top:16px;margin-top:16px}
++.alert-danger{background:#fde8e6;border:2px solid #b3261e;color:#5c1410;padding:14px 16px;border-radius:12px;margin:0 0 16px}
++.notice{margin:0 0 16px}
++:focus-visible{outline:3px solid #1f5fbf;outline-offset:2px}
++@media (prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
++@media print{header,.safety,.skip-link,form,.pager{display:none}main{padding:0}}
+diff --git a/apps/api/src/lboe_api/ui/presentation.py b/apps/api/src/lboe_api/ui/presentation.py
+new file mode 100644
+index 0000000..d53e52e
+--- /dev/null
++++ b/apps/api/src/lboe_api/ui/presentation.py
+@@ -0,0 +1,218 @@
++"""Operator-facing presentation helpers: local time, readable labels, and error pages."""
++
++from __future__ import annotations
++
++import html
++from datetime import UTC, datetime
++from typing import Any
++from urllib.parse import urlsplit
++from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
++
++from fastapi import Request
++from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
++from fastapi.exceptions import RequestValidationError
++from fastapi.responses import HTMLResponse, Response
++from starlette.exceptions import HTTPException as StarletteHTTPException
++
++from lboe_api.main import settings
++
++
++def display_zone() -> ZoneInfo:
++    try:
++        return ZoneInfo(settings.display_timezone)
++    except (ZoneInfoNotFoundError, ValueError):
++        return ZoneInfo("UTC")
++
++
++def fmt_dt(value: datetime | None, *, with_time: bool = True) -> str:
++    """Format a timestamp in the operator's timezone; naive values are stored UTC."""
++    if value is None:
++        return "—"
++    if value.tzinfo is None:
++        value = value.replace(tzinfo=UTC)
++    local = value.astimezone(display_zone())
++    return local.strftime("%d %b %Y, %H:%M" if with_time else "%d %b %Y")
++
++
++def parse_local_datetime(value: str) -> datetime:
++    """Parse an ``<input type=datetime-local>`` value entered in the operator's timezone."""
++    parsed = datetime.fromisoformat(value)
++    if parsed.tzinfo is None:
++        parsed = parsed.replace(tzinfo=display_zone())
++    return parsed.astimezone(UTC)
++
++
++def local_input_value(value: datetime) -> str:
++    return value.astimezone(display_zone()).strftime("%Y-%m-%dT%H:%M")
++
++
++STATE_LABELS = {
++    "DISCOVERED": "Discovered",
++    "DEDUPED": "De-duplicated",
++    "QUALIFIED": "Qualified",
++    "REJECTED": "Rejected",
++    "ENRICHING": "Enriching",
++    "ENRICHED": "Enriched",
++    "ENRICHMENT_FAILED": "Enrichment failed",
++    "AUDITING": "Auditing",
++    "AUDITED": "Audited",
++    "SCORED": "Scored",
++    "ARCHIVED": "Archived",
++    "DEMO_QUEUED": "Concept queued",
++    "DEMO_GENERATED": "Concept generated",
++    "QA_FAILED": "Concept failed QA",
++    "REVIEW_PENDING": "Awaiting concept review",
++    "APPROVED_FOR_OUTREACH": "Concept approved — draft outreach",
++    "CONSENT_PENDING": "Awaiting consent decision",
++    "OUTREACH_READY": "Cleared for manual contact",
++    "CONTACTED": "Contacted (manually)",
++    "REPLIED": "Replied",
++    "MEETING": "Meeting",
++    "PROPOSAL": "Proposal",
++    "WON": "Won",
++    "LOST": "Lost",
++    "SUPPRESSED": "Suppressed — do not contact",
++}
++
++STATUS_LABELS = {
++    "qa_passed": "Passed QA — awaiting review",
++    "qa_failed": "Failed QA — sharing blocked",
++    "review_pending": "Awaiting review",
++    "approved": "Approved",
++    "rejected": "Rejected",
++    "changes_requested": "Changes requested",
++    "regeneration_requested": "Regeneration requested",
++    "manual_edit_required": "Manual edit required",
++    "rendering": "Rendering",
++    "draft": "Draft",
++    "ready": "Ready",
++    "blocked": "Blocked",
++    "archived": "Archived",
++}
++
++ACTION_LABELS = {
++    "generate_demo": "Generate concept preview",
++    "conversion_upgrade_offer": "Conversion upgrade",
++    "technical_cleanup_offer": "Technical cleanup",
++    "score_only": "Score only",
++    "audit_required": "Audit required",
++    "manual_review": "Manual review",
++    "do_not_contact": "Do not contact",
++    "archive": "Archive",
++}
++
++
++def state_label(value: str | None) -> str:
++    return STATE_LABELS.get(value or "", (value or "").replace("_", " ").capitalize())
++
++
++def status_label(value: str | None) -> str:
++    return STATUS_LABELS.get(value or "", (value or "").replace("_", " ").capitalize())
++
++
++def action_label(value: str | None) -> str:
++    return ACTION_LABELS.get(value or "", (value or "").replace("_", " ").capitalize())
++
++
++# Machine-readable API codes -> sentences an operator can act on.
++FRIENDLY_ERRORS = {
++    "business_not_found": "That business no longer exists or the link is wrong.",
++    "campaign_not_found": "That campaign no longer exists or the link is wrong.",
++    "demo_not_found": "That concept preview no longer exists.",
++    "proposal_not_found": "That proposal pack no longer exists.",
++    "pilot_not_found": "That pilot no longer exists.",
++    "queue_not_found": "There is no queue with that name.",
++    "demo_not_shareable": "Only concept previews that passed QA can be shared. Fix or regenerate this concept first.",
++    "business_suppressed": "This business is suppressed. Nothing can be shared with or sent to it.",
++    "pilot_preview_link_cap_reached": "Today's preview-link cap for this pilot has been reached.",
++    "proposal_review_required": "Approve the proposal pack before exporting it.",
++    "invalid_proposal_review": "Choose a review decision and enter the reviewer's name.",
++    "proposal_safety_checks_failed": "The proposal cannot be approved while a safety check is failing.",
++    "unsupported_bulk_action": "That bulk action is not available.",
++    "invalid_pilot_config": "Every pilot cap and target must be greater than zero.",
++    "pilot_readiness_failed": "The pilot is not ready yet. Resolve the failing readiness checks first.",
++    "invalid_pilot_transition": "The pilot cannot move to that status from its current status.",
++    "pilot_not_mutable": "Closed pilots cannot be changed, and caps must be greater than zero.",
++    "demo_qa_not_passed": "The concept must pass every QA check before it can be approved.",
++    "demo_artifact_missing": "The concept files are missing. Regenerate the concept.",
++    "checklist_incomplete": "Every review checklist item must be confirmed before approval.",
++    "ambiguous_identity": "The business identity is ambiguous. Resolve it before approval.",
++    "do_not_contact_hold": "A do-not-contact hold applies to this business.",
++    "invalid_transition": "That step is not allowed from the business's current stage.",
++    "invalid_operator_token": "That operator token is not valid.",
++    "active_operator_required": "Create an active operator before signing in.",
++}
++
++
++def friendly(detail: Any) -> str:
++    if isinstance(detail, dict):
++        code = str(detail.get("error") or detail.get("reason") or "")
++        return FRIENDLY_ERRORS.get(code, code.replace("_", " ").capitalize() or "The request could not be completed.")
++    if isinstance(detail, list):
++        fields = sorted({str(item.get("loc", ["", "field"])[-1]) for item in detail if isinstance(item, dict)})
++        return "Please check these fields: " + ", ".join(fields) if fields else "Some fields are invalid."
++    code = str(detail or "")
++    return FRIENDLY_ERRORS.get(code, code.replace("_", " ").capitalize() or "The request could not be completed.")
++
++
++def _prospect_error(status: int) -> HTMLResponse:
++    message = (
++        "This preview link has expired or has been withdrawn."
++        if status == 410
++        else "This preview is not available. Please check the link you were sent."
++    )
++    body = (
++        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
++        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
++        "<meta name='robots' content='noindex, nofollow'><title>Preview unavailable</title>"
++        "<style>body{font-family:system-ui,sans-serif;max-width:40rem;margin:4rem auto;"
++        "padding:0 1rem;color:#17202a}</style>"
++        f"</head><body><main><h1>Preview unavailable</h1><p>{html.escape(message)}</p></main></body></html>"
++    )
++    return HTMLResponse(body, status_code=status, headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
++
++
++def _back_link(request: Request) -> str:
++    """Link back to the operator page the request came from (same-site /ui paths only)."""
++    referer = urlsplit(request.headers.get("referer", ""))
++    if referer.path.startswith("/ui") and referer.netloc in {"", request.url.netloc}:
++        target = referer.path + (f"?{referer.query}" if referer.query else "")
++        return f"<a class='button button-secondary' href='{html.escape(target)}'>Go back</a> "
++    return ""
++
++
++async def ui_http_exception_handler(request: Request, exc: Exception) -> Response:
++    assert isinstance(exc, StarletteHTTPException)
++    path = request.url.path
++    if path.startswith("/preview/"):
++        return _prospect_error(exc.status_code)
++    if not path.startswith("/ui"):
++        return await http_exception_handler(request, exc)
++    from lboe_api.ui.routes import page
++
++    title = {404: "Not found", 409: "Action not available", 410: "No longer available"}.get(
++        exc.status_code, "Something went wrong"
++    )
++    response = page(
++        title,
++        f"<div class='warning' role='alert'>{html.escape(friendly(exc.detail))}</div>"
++        f"<p>{_back_link(request)}<a class='button button-secondary' href='/ui'>Dashboard</a></p>",
++    )
++    response.status_code = exc.status_code
++    if exc.headers:
++        response.headers.update(exc.headers)
++    return response
++
++
++async def ui_validation_exception_handler(request: Request, exc: Exception) -> Response:
++    assert isinstance(exc, RequestValidationError)
++    if not request.url.path.startswith("/ui"):
++        return await request_validation_exception_handler(request, exc)
++    from lboe_api.ui.routes import page
++
++    response = page(
++        "Please check the form",
++        f"<div class='warning' role='alert'>{html.escape(friendly(exc.errors()))}</div><p>{_back_link(request)}</p>",
++    )
++    response.status_code = 422
++    return response
+diff --git a/apps/api/src/lboe_api/ui/routes.py b/apps/api/src/lboe_api/ui/routes.py
+index a815cdc..6117c0a 100644
+--- a/apps/api/src/lboe_api/ui/routes.py
++++ b/apps/api/src/lboe_api/ui/routes.py
+@@ -67,6 +67,7 @@ from lboe_api.pilot_service import (
+     readiness_summary,
+ )
+ from lboe_api.reporting_service import build_pilot_report
++from lboe_api.ui.presentation import fmt_dt, state_label, status_label
+ 
+ router = APIRouter()
+ LEADS_PER_PAGE = 50
+@@ -146,9 +147,44 @@ def esc(value: Any) -> str:
+     return html.escape("" if value is None else str(value))
+ 
+ 
++NAV_ITEMS = (
++    ("/ui", "Dashboard"),
++    ("/ui/opportunities", "Opportunities"),
++    ("/ui/campaigns", "Campaigns"),
++    ("/ui/queues", "Queues"),
++    ("/ui/queues/proposal-ready", "Proposals"),
++    ("/ui/queues/delivery", "Delivery"),
++    ("/ui/pilots", "Pilots"),
++    ("/ui/reports/pilot", "Reports"),
++    ("/ui/operators", "Admin"),
++    ("/ui/system", "System"),
++)
++
++
++def _accessible_tables(body: str) -> str:
++    """Column headers get scope; wide tables get a focusable, labelled scroll region."""
++    body = body.replace("<th>", "<th scope='col'>")
++    body = body.replace(
++        "<table>", "<div class='table-scroll' role='region' aria-label='Scrollable table' tabindex='0'><table>"
++    )
++    return body.replace("</table>", "</table></div>")
++
++
+ def page(title: str, body: str) -> HTMLResponse:
++    nav = "".join(f"<a href='{href}'>{label}</a>" for href, label in NAV_ITEMS)
++    # Pages that render their own hero heading keep it as the single <h1>.
++    heading = "" if "<h1" in body else f"<h1>{esc(title)}</h1>"
+     return HTMLResponse(
+-        f"""<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{esc(title)} · LBOE</title><link rel='stylesheet' href='/ui/static/ui.css'></head><body><header><a href='/ui'><strong>LBOE Operator Cockpit</strong></a><nav><a href='/ui'>Dashboard</a><a href='/ui/opportunities'>Opportunities</a><a href='/ui/campaigns'>Campaigns</a><a href='/ui/queues'>Queues</a><a href='/ui/queues/proposal-ready'>Proposals</a><a href='/ui/queues/delivery'>Delivery</a><a href='/ui/pilots'>Pilots</a><a href='/ui/reports/pilot'>Reports</a><a href='/ui/operators'>Admin</a><a href='/ui/system'>System</a></nav></header><div class='safety'>System delivery is disabled. LBOE does not send email, WhatsApp, SMS, review requests, or CRM messages.</div><main><p class='muted'><a href='/ui'>Dashboard</a> / {esc(title)}</p><h1>{esc(title)}</h1>{body}</main></body></html>"""
++        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
++        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
++        f"<title>{esc(title)} · LBOE</title><link rel='stylesheet' href='/ui/static/ui.css'></head><body>"
++        "<a class='skip-link' href='#main'>Skip to main content</a>"
++        f"<header><a class='brand' href='/ui'><strong>LBOE Operator Cockpit</strong></a>"
++        f"<nav aria-label='Primary'>{nav}</nav></header>"
++        "<aside class='safety' aria-label='Safety notice'>System delivery is disabled. LBOE does not send email, "
++        "WhatsApp, SMS, review requests, or CRM messages.</aside>"
++        f"<main id='main' tabindex='-1'><nav class='breadcrumb muted' aria-label='Breadcrumb'><a href='/ui'>Dashboard</a> / "
++        f"<span aria-current='page'>{esc(title)}</span></nav>{heading}{_accessible_tables(body)}</main></body></html>"
+     )
+ 
+ 
+@@ -623,7 +659,7 @@ def next_action_panel(report: dict[str, Any]) -> str:
+     if counts.get("REVIEW_PENDING", 0):
+         title, copy, href, label = (
+             "Review demos",
+-            "Approved concepts are waiting for a human decision.",
++            "Concept previews have passed QA and are waiting for your review decision.",
+             "/ui/queues",
+             "Open review queue",
+         )
+@@ -710,11 +746,11 @@ def campaigns(db: Session = Depends(session)) -> HTMLResponse:
+             f"<tr><td><a class='table-primary' href='/ui/campaigns/{campaign.id}'>{esc(campaign.name)}</a><small class='table-sub'>Latest run · {esc(campaign.created_at)}</small></td><td>{esc(campaign.vertical)}</td><td>{esc(campaign.geography)}</td><td><strong>{count}</strong></td><td><a class='button button-small button-secondary' href='/ui/campaigns/{campaign.id}'>Open workspace</a></td></tr>"
+         )
+     table = (
+-        "<table><tr><th>Campaign</th><th>Vertical</th><th>Geography</th><th>Leads</th><th></th></tr>"
++        "<table><tr><th>Campaign</th><th>Vertical</th><th>Geography</th><th>Leads</th><th><span class='visually-hidden'>Actions</span></th></tr>"
+         + "".join(rows)
+         + "</table>"
+     )
+-    form = "<section class='section create-panel'><div><span class='eyebrow'>New workspace</span><h2>Start a campaign</h2><p class='muted'>Choose the market you want to work. You can add discovery results after the campaign is created.</p></div><form method='post' action='/ui/campaigns'><input name='name' placeholder='Campaign name' required><input name='vertical' placeholder='Vertical' required><input name='geography' placeholder='Geography'><button class='button-primary'>Create campaign</button></form></section>"
++    form = "<section class='section create-panel'><div><span class='eyebrow'>New workspace</span><h2>Start a campaign</h2><p class='muted'>Choose the market you want to work. You can add discovery results after the campaign is created.</p></div><form method='post' action='/ui/campaigns'><label class='field'><span>Campaign name</span><input name='name' required></label><label class='field'><span>Vertical</span><input name='vertical' required placeholder='e.g. hair salons'></label><label class='field'><span>Geography</span><input name='geography' placeholder='e.g. Cape Town'></label><button class='button-primary'>Create campaign</button></form></section>"
+     return page(
+         "Campaigns",
+         "<div class='page-intro'><div><span class='eyebrow'>Workspaces</span><h1>Campaigns</h1><p class='muted'>One workspace per market. Open a campaign to see its map and lead queue.</p></div></div>"
+@@ -865,7 +901,7 @@ def campaign_detail(
+         + (page_link(current_page + 1, "Next") if current_page < page_count else "")
+         + "</nav>"
+     )
+-    filters = f"<form class='lead-filters' method='get'><input name='q' value='{esc(q)}' placeholder='Search business'><select name='website_status'><option value=''>All website statuses</option><option value='no_website' {'selected' if website_status == 'no_website' else ''}>No website</option><option value='website_present' {'selected' if website_status == 'website_present' else ''}>Website present</option></select><input name='state' value='{esc(state)}' placeholder='State'><input name='action' value='{esc(action)}' placeholder='Recommended action'><input name='band' value='{esc(band)}' placeholder='Score band'><button>Filter leads</button></form>"
++    filters = f"<form class='lead-filters' method='get'><input name='q' value='{esc(q)}' placeholder='Search business' aria-label='Search business name'><select name='website_status' aria-label='Website status'><option value=''>All website statuses</option><option value='no_website' {'selected' if website_status == 'no_website' else ''}>No website</option><option value='website_present' {'selected' if website_status == 'website_present' else ''}>Website present</option></select><input name='state' value='{esc(state)}' placeholder='State' aria-label='Lifecycle state'><input name='action' value='{esc(action)}' placeholder='Recommended action' aria-label='Recommended action'><input name='band' value='{esc(band)}' placeholder='Score band' aria-label='Score band'><button>Filter leads</button></form>"
+     table = (
+         "<table><tr><th>Business</th><th>Category</th><th>Locality</th><th>State</th><th>Score</th><th>Band</th><th>Action</th><th>Demo</th></tr>"
+         + "".join(rows)
+@@ -881,9 +917,9 @@ def campaign_detail(
+         "<section class='section discovery-panel'><div><span class='eyebrow'>Find businesses</span><h2>Run discovery in this campaign</h2><p class='muted'>Search Google Maps for a vertical and location. Coordinates are required by the maps provider and keep the search predictable.</p></div>"
+         "<form method='post' action='/ui/campaigns/"
+         + str(campaign_id)
+-        + "/discover'><input name='queries' placeholder='Queries, e.g. hair salons' required><input name='geography' value='"
++        + "/discover'><label class='field'><span>Search queries (comma separated)</span><input name='queries' placeholder='e.g. hair salons' required></label><label class='field'><span>Geography</span><input name='geography' value='"
+         + esc(campaign.geography or "")
+-        + "' placeholder='Geography'><div class='discovery-coordinates'><input name='latitude' type='number' step='any' placeholder='Latitude' required><input name='longitude' type='number' step='any' placeholder='Longitude' required><input name='max_results' type='number' min='1' max='100' value='25' aria-label='Maximum results'></div><button class='button-primary'>Find businesses</button></form></section>"
++        + "'></label><div class='discovery-coordinates'><label class='field'><span>Latitude</span><input name='latitude' type='number' step='any' required></label><label class='field'><span>Longitude</span><input name='longitude' type='number' step='any' required></label><label class='field'><span>Maximum results</span><input name='max_results' type='number' min='1' max='100' value='25'></label></div><button class='button-primary'>Find businesses</button></form></section>"
+     )
+     return page(
+         f"Campaign · {campaign.name}",
+@@ -895,9 +931,16 @@ def campaign_detail(
+     )
+ 
+ 
++def _workflow_panel(request: Request, db: Session, business: Business, suppressed: bool) -> str:
++    from lboe_api.ui.workflow import workflow_panel  # workflow imports this module
++
++    return workflow_panel(request, db, business, suppressed)
++
++
+ @router.get("/ui/businesses/{business_id}", response_class=HTMLResponse)
+ def business_detail(
+     business_id: uuid.UUID,
++    request: Request,
+     action_completed: str | None = None,
+     action_error: str | None = None,
+     db: Session = Depends(session),
+@@ -942,9 +985,15 @@ def business_detail(
+         .where(OperatorAssignment.business_id == business_id)
+         .order_by(OperatorAssignment.created_at.desc())
+     ).all()
++    suppression_entry = db.scalar(
++        select(SuppressionEntry)
++        .where(SuppressionEntry.business_id == business_id)
++        .order_by(SuppressionEntry.created_at.desc())
++    )
++    suppressed = business.state == "SUPPRESSED" or suppression_entry is not None
+     demo_html = (
+         "".join(
+-            f"<li><a href='/ui/demos/{demo.id}/preview'>Demo {demo.id}</a> — {esc(demo.status)} {('<strong>QA failed: inspect checks; regenerate or mark manual edit. Sharing blocked.</strong>' if demo.status == 'qa_failed' else '')} <a href='/ui/demos/{demo.id}/preview-links'>preview links</a></li>"
++            f"<li><a href='/ui/demos/{demo.id}/preview'>{esc(demo.demo_type.replace('_', ' ').capitalize())} concept · {esc(fmt_dt(demo.created_at))}</a> — {esc(status_label(demo.status))} {('<strong>Sharing blocked until QA passes: inspect checks, then regenerate or edit.</strong>' if demo.status == 'qa_failed' else '')} <a href='/ui/demos/{demo.id}/qa'>QA checks</a> · <a href='/ui/demos/{demo.id}/preview-links'>Share links</a></li>"
+             for demo in demos
+         )
+         or "<li>None</li>"
+@@ -958,12 +1007,14 @@ def business_detail(
+     )
+     event_html = (
+         "".join(
+-            f"<li>{esc(event.event_type)} · {esc(event.occurred_at)} · {esc(event.summary)}</li>" for event in events
++            f"<li>{esc(event.event_type.replace('_', ' ').capitalize())} · {esc(fmt_dt(event.occurred_at))} · {esc(event.summary)}</li>"
++            for event in events
+         )
+         or "<li>None</li>"
+     )
+     comment_html = (
+-        "".join(f"<li>{esc(comment.body)} · {esc(comment.created_at)}</li>" for comment in comments) or "<li>None</li>"
++        "".join(f"<li>{esc(comment.body)} · {esc(fmt_dt(comment.created_at))}</li>" for comment in comments)
++        or "<li>None</li>"
+     )
+     operators = db.scalars(select(Operator).where(Operator.active.is_(True))).all()
+     operator_options = "".join(f"<option value='{op.id}'>{esc(op.display_name)}</option>" for op in operators)
+@@ -1051,9 +1102,14 @@ def business_detail(
+         )
+         or "<li><strong>No score components yet</strong><small>Run scoring to see the evidence behind the recommendation.</small></li>"
+     )
++    hold_reasons = [h.reason for h in score_holds]
++    if suppressed and not any(h.code == "SUPPRESSED" for h in score_holds):
++        hold_reasons.insert(
++            0, f"Suppressed: {suppression_entry.reason if suppression_entry else 'operator suppression'}"
++        )
+     hold_notice = (
+-        "<div class='warning'><strong>Hold:</strong> " + "; ".join(esc(h.reason) for h in score_holds) + "</div>"
+-        if score_holds
++        "<div class='warning'><strong>Hold:</strong> " + "; ".join(esc(reason) for reason in hold_reasons) + "</div>"
++        if hold_reasons
+         else "<p class='success'>No identity, suppression, or policy holds are blocking this lead.</p>"
+     )
+     observability = (
+@@ -1065,12 +1121,17 @@ def business_detail(
+     )
+     pilot_banner = ""
+     if pilot is not None:
+-        pilot_banner = f"<div class='safety'>{'DRY RUN MODE — manual outreach and CRM outcome logging are blocked by the operator console.' if pilot.mode == 'dry_run' else 'ACTIVE PILOT MODE — manual records represent operator activity; LBOE still sends nothing.'} <a href='/ui/pilots/{pilot.id}'>View pilot</a></div>"
++        pilot_banner = f"<div class='notice'>{'DRY RUN pilot — this is a rehearsal. Do not contact businesses or record real outreach for it.' if pilot.mode == 'dry_run' else 'ACTIVE pilot — manual records represent real operator activity; LBOE still sends nothing.'} <a href='/ui/pilots/{pilot.id}'>View pilot</a></div>"
+     next_action_button = ""
++    if suppressed:
++        action_title = "Suppressed — do not contact"
++        action_reason = "No pipeline actions are available for a suppressed business."
+     # A demo is generated from a persisted Business Brief. Keep the UI honest
+     # about that prerequisite instead of showing a demo action that can only
+     # return ``brief_required`` from the API.
+-    if raw_action == "audit_required" and latest_audit is None:
++    if suppressed:
++        pass
++    elif raw_action == "audit_required" and latest_audit is None:
+         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='audit'><button class='button-primary'>Run website audit</button></form>"
+     elif evidence_needs_refresh:
+         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='refresh_evidence'><button class='button-primary'>Refresh score and brief</button></form>"
+@@ -1090,24 +1151,48 @@ def business_detail(
+         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='score'><button class='button-primary'>Score this lead</button></form>"
+     elif any(demo.status == "approved" for demo in demos) and not proposals:
+         next_action_button = f"<form method='post' action='/ui/businesses/{business_id}/action'><input type='hidden' name='action' value='proposal'><button class='button-primary'>Create proposal pack</button></form>"
++    suppression_banner = (
++        f"<div class='alert-danger' role='alert'><strong>Suppressed — do not contact.</strong> "
++        f"Reason: {esc(suppression_entry.reason if suppression_entry else 'operator suppression')}"
++        f"{' · recorded ' + esc(fmt_dt(suppression_entry.created_at)) if suppression_entry else ''}. "
++        "Scoring, demos, drafts and contact logging are disabled for this business.</div>"
++        if suppressed
++        else ""
++    )
++    assignment_names = (
++        {
++            op.id: op.display_name
++            for op in db.scalars(select(Operator).where(Operator.id.in_([a.operator_id for a in assignments]))).all()
++        }
++        if assignments
++        else {}
++    )
++    safety_section = (
++        f"<section class='section'><h2>Safety</h2><p>Suppressed{' on ' + esc(fmt_dt(suppression_entry.created_at)) if suppression_entry else ''}. "
++        "Suppression is permanent in LBOE; the business will not be offered for outreach again.</p></section>"
++        if suppressed
++        else f"<section class='section'><h2>Safety</h2><p class='muted'>Suppressing a business permanently blocks outreach actions and is recorded for auditability.</p><form method='post' action='/ui/businesses/{business_id}/suppress'><label class='field'><span>Reason for suppression</span><input name='reason' required></label><button>Suppress business</button></form></section>"
++    )
+     body = (
+-        pilot_banner
++        suppression_banner
++        + pilot_banner
+         + (
+             f"<div class='success'>Action completed: {esc(action_completed.replace('_', ' '))}.</div>"
+             if action_completed
+             else ""
+         )
+         + (f"<div class='warning'>Action could not be completed: {esc(action_error)}</div>" if action_error else "")
+-        + f"<div class='page-intro'><div><div class='eyebrow'>Business workspace</div><h1>{esc(business.display_name)}</h1><p class='muted'>{esc(business.category or 'Local business')} · {esc(business.locality or 'Location not verified')}</p></div><span class='badge'>{esc(business.state.replace('_', ' ').title())}</span></div>"
++        + f"<div class='page-intro'><div><div class='eyebrow'>Business workspace</div><h1>{esc(business.display_name)}</h1><p class='muted'>{esc(business.category or 'Local business')} · {esc(business.locality or 'Location not verified')}</p></div><span class='badge'>{esc(state_label(business.state))}</span></div>"
+         + f"<section class='next-action'><div><div class='eyebrow'>Recommended next step</div><h2>{esc(action_title)}</h2><p>{esc(action_reason)}</p></div>{next_action_button}</section>"
+         + f"<div class='cards'><div class='card'><span>Opportunity score</span><b>{score_value}</b><small>{esc(band)} · {esc(score_explanation)}</small></div><div class='card'><span>Evidence status</span><b>{'Ready' if score and brief else 'In progress'}</b><small>{'Score and brief available' if score and brief else 'More evidence may be needed'}</small></div><div class='card'><span>Outreach</span><b>{'Drafted' if package else 'Not started'}</b><small>{'No messages are sent by LBOE'}</small></div></div>"
+-        + f"<section class='section'><div class='section-head'><h2>What we know</h2><span class='badge'>Verified identity</span></div><p><strong>{esc(business.display_name)}</strong> is listed as a <strong>{esc(business.category or 'local business')}</strong> in <strong>{esc(business.locality or 'an unverified location')}</strong>.</p><p class='muted'>{esc(business.address_text or 'A full address has not been verified yet.')}</p><p class='muted'>This page summarizes evidence collected by LBOE. It does not claim the business is poorly run.</p></section>"
++        + f"<section class='section'><div class='section-head'><h2>What we know</h2><span class='badge'>From listing data — verify before use</span></div><p><strong>{esc(business.display_name)}</strong> is listed as a <strong>{esc(business.category or 'local business')}</strong> in <strong>{esc(business.locality or 'an unverified location')}</strong>.</p><p class='muted'>{esc(business.address_text or 'A full address has not been verified yet.')}</p><p class='muted'>This page summarizes evidence collected by LBOE. It does not claim the business is poorly run.</p></section>"
+         + f"<section class='section'><h2>Why this recommendation?</h2><p>{esc(brief.summary if brief else action_reason)}</p>{observability}</section>"
+         + f"<section class='section'><h2>Evidence progress</h2><div class='stat-line'><span>Website / audit</span><strong>{'Audited' if latest_audit else 'Not audited'}</strong></div><div class='stat-line'><span>Business brief</span><strong>{'Prepared' if brief else 'Not prepared'}</strong></div><div class='stat-line'><span>Optional enrichment</span><strong>{'Available' if enrichment_runs else 'Not run'}</strong></div><p class='muted'>Enrichment is optional. “Not run” is not an error; the current recommendation can still be based on discovery and audit evidence.</p></section>"
+         + f"<section class='section'><h2>Demo and proposal path</h2><p>{esc(package.status.replace('_', ' ').title()) if package else 'No outreach draft has been prepared.'}</p><ul>{demo_html}</ul><h3>Proposal packs</h3><ul>{proposal_html}</ul><p class='muted'>For a no-website lead, generate a concept preview first. After human approval, create a proposal pack for operator review. LBOE does not send messages automatically.</p></section>"
+-        + f"<section class='section'><h2>Activity</h2><h3>CRM events</h3><ul>{event_html}</ul><h3>Assignments</h3><ul>{''.join(f'<li>{esc(str(a.operator_id))} · {esc(a.status)}</li>' for a in assignments) or '<li>None</li>'}</ul><form method='post' action='/ui/businesses/{business_id}/assign'><select name='operator_id'>{operator_options}</select><button>Assign</button></form></section>"
+-        + f"<section class='section'><h2>Operator notes</h2><ul>{comment_html}</ul><form method='post' action='/ui/businesses/{business_id}/comment'><textarea name='body' required placeholder='Add context for the next operator'></textarea><button>Add note</button></form></section>"
+-        + f"<section class='section'><h2>Safety</h2><p class='muted'>Suppressing a business prevents future outreach actions and is recorded for auditability.</p><form method='post' action='/ui/businesses/{business_id}/suppress'><input name='reason' required placeholder='Suppression reason'><button>Suppress business</button></form></section>"
++        + _workflow_panel(request, db, business, suppressed)
++        + f"<section class='section'><h2>Activity</h2><h3>CRM events</h3><ul>{event_html}</ul><h3>Assignments</h3><ul>{''.join(f'<li>{esc(assignment_names.get(a.operator_id, "Unknown operator"))} · {esc(a.status)}</li>' for a in assignments) or '<li>None</li>'}</ul><form method='post' action='/ui/businesses/{business_id}/assign'><label class='field'><span>Assign to</span><select name='operator_id'>{operator_options}</select></label><button>Assign</button></form></section>"
++        + f"<section class='section'><h2>Operator notes</h2><ul>{comment_html}</ul><form method='post' action='/ui/businesses/{business_id}/comment'><label class='field'><span>Add a note for the next operator</span><textarea name='body' required></textarea></label><button>Add note</button></form></section>"
++        + safety_section
+     )
+     return page(business.display_name, body)
+ 
+@@ -1203,13 +1288,13 @@ def outreach_workbench(business_id: uuid.UUID, db: Session = Depends(session)) -
+         or "<p>No draft package.</p>"
+     )
+     followup_html = (
+-        "".join(f"<li>{esc(item.due_at)} · {esc(item.reason)} · {esc(item.status)}</li>" for item in followups)
++        "".join(f"<li>{esc(fmt_dt(item.due_at))} · {esc(item.reason)} · {esc(item.status)}</li>" for item in followups)
+         or "<li>None</li>"
+     )
+     objection_html = "".join(f"<li>{esc(item.code)} · {esc(item.notes)}</li>" for item in objections) or "<li>None</li>"
+     return page(
+         "Manual outreach workbench",
+-        f"<div class='safety'>COPY ONLY — LBOE never sends messages. Perform any contact outside LBOE and record it manually.</div><p>{esc(business.display_name)} · state {esc(business.state)}</p><h2>Drafts</h2>{drafts}<h2>Follow-up list</h2><ul>{followup_html}</ul><h2>Objections</h2><ul>{objection_html}</ul><p>Use the API to add follow-up tasks and operator-entered objection or reply classifications.</p>",
++        f"<div class='safety'>COPY ONLY — LBOE never sends messages. Perform any contact outside LBOE and record it manually.</div><p>{esc(business.display_name)} · state {esc(business.state)}</p><h2>Drafts</h2>{drafts}<h2>Follow-up list</h2><ul>{followup_html}</ul><h2>Objections</h2><ul>{objection_html}</ul><p><a href='/ui/businesses/{business.id}#workflow'>Record an outcome or schedule a follow-up</a> on the business page.</p>",
+     )
+ 
+ 
+@@ -1218,9 +1303,10 @@ def follow_up_queue(db: Session = Depends(session)) -> HTMLResponse:
+     tasks = db.scalars(
+         select(ManualFollowUpTask).where(ManualFollowUpTask.status == "open").order_by(ManualFollowUpTask.due_at)
+     ).all()
++    owners = {row.id: row for row in _rows_for_ids(db, [item.business_id for item in tasks])}
+     rows = (
+         "".join(
+-            f"<tr><td><a href='/ui/businesses/{item.business_id}/outreach-workbench'>{item.business_id}</a></td><td>{esc(item.due_at)}</td><td>{esc(item.reason)}</td></tr>"
++            f"<tr><td><a href='/ui/businesses/{item.business_id}/outreach-workbench'>{esc(owners[item.business_id].display_name if item.business_id in owners else 'Unknown business')}</a></td><td>{esc(fmt_dt(item.due_at))}</td><td>{esc(item.reason)}</td></tr>"
+             for item in tasks
+         )
+         or "<tr><td colspan='3'>No open follow-ups</td></tr>"
+@@ -1254,6 +1340,8 @@ def assign_business(
+ 
+ @router.post("/ui/businesses/{business_id}/comment")
+ def add_comment(business_id: uuid.UUID, body: str = Form(...), db: Session = Depends(session)) -> RedirectResponse:
++    if db.get(Business, business_id) is None:
++        raise HTTPException(404, "business_not_found")
+     operator = db.scalar(select(Operator).where(Operator.active.is_(True)).order_by(Operator.created_at))
+     if operator is None:
+         operator = Operator(display_name="local-operator", role="owner")
+@@ -1450,7 +1538,7 @@ def no_website_queue(db: Session) -> HTMLResponse:
+             f"<tr><td><a class='table-primary' href='/ui/businesses/{business.id}'>{esc(business.display_name)}</a><small class='table-sub'>{esc(business.locality or 'Location not verified')}</small></td><td><span class='badge'>{esc(business.state.replace('_', ' ').title())}</span></td><td>{score.score if score else '—'}</td><td>{esc(action)}</td><td><a class='button button-small button-secondary' href='/ui/businesses/{business.id}'>Review lead</a></td></tr>"
+         )
+     table = (
+-        "<table><tr><th>Business</th><th>State</th><th>Score</th><th>Recommended next step</th><th></th></tr>"
++        "<table><tr><th>Business</th><th>State</th><th>Score</th><th>Recommended next step</th><th><span class='visually-hidden'>Actions</span></th></tr>"
+         + ("".join(rows) or "<tr><td colspan='5'>No active businesses without a website were found.</td></tr>")
+         + "</table>"
+     )
+@@ -1564,7 +1652,7 @@ def operators(db: Session = Depends(session)) -> HTMLResponse:
+         f"<tr><td>{esc(op.display_name)}</td><td>{esc(op.role)}</td><td>{'active' if op.active else 'inactive'}</td></tr>"
+         for op in db.scalars(select(Operator).order_by(Operator.display_name)).all()
+     )
+-    form = "<h2>Add local operator</h2><form method='post' action='/ui/operators'><input name='display_name' required placeholder='Display name'><input name='role' value='operator'><button>Create</button></form>"
++    form = "<h2>Add local operator</h2><form method='post' action='/ui/operators'><label class='field'><span>Display name</span><input name='display_name' required></label><label class='field'><span>Role</span><select name='role'><option value='operator'>Operator</option><option value='reviewer'>Reviewer</option><option value='manager'>Manager</option><option value='owner'>Owner</option><option value='viewer'>Viewer</option></select></label><button>Create</button></form>"
+     return page(
+         "Operators",
+         f"<table><tr><th>Name</th><th>Role</th><th>Status</th></tr>{rows}</table>{form}<p>Local trusted operator mode. No external authentication is configured.</p>",
+@@ -1590,7 +1678,7 @@ def select_operator(db: Session = Depends(session)) -> HTMLResponse:
+     )
+     return page(
+         "Select operator",
+-        f"<form method='post'><select name='operator_id'>{options}</select><button>Use local operator</button></form>",
++        f"<form method='post'><label class='field'><span>Operator</span><select name='operator_id'>{options}</select></label><button>Use local operator</button></form>",
+     )
+ 
+ 
+@@ -1612,9 +1700,10 @@ def my_queue(request: Request, db: Session = Depends(session)) -> Response:
+             OperatorAssignment.status.in_(["assigned", "in_progress"]),
+         )
+     ).all()
++    owners = {row.id: row for row in _rows_for_ids(db, [a.business_id for a in assignments])}
+     rows = (
+         "".join(
+-            f"<li><a href='/ui/businesses/{assignment.business_id}'>{assignment.business_id}</a> · {assignment.status}</li>"
++            f"<li><a href='/ui/businesses/{assignment.business_id}'>{esc(owners[assignment.business_id].display_name if assignment.business_id in owners else 'Unknown business')}</a> · {esc(assignment.status)}</li>"
+             for assignment in assignments
+         )
+         or "<li>No assigned leads</li>"
+@@ -1633,16 +1722,42 @@ def safe_demo_path(demo: GeneratedDemo, db: Session) -> Path:
+     return path
+ 
+ 
++PREVIEW_HEADERS = {
++    # Concept previews must never be indexed, cached by shared proxies, framed, or leak
++    # their tokenised URL via Referer; they are static HTML, so scripts are not allowed.
++    "X-Robots-Tag": "noindex, nofollow, noarchive",
++    "Cache-Control": "no-store",
++    "Referrer-Policy": "no-referrer",
++    "X-Content-Type-Options": "nosniff",
++    "Content-Security-Policy": (
++        "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; "
++        "form-action 'none'; frame-ancestors 'none'"
++    ),
++}
++ROBOTS_META = '<meta name="robots" content="noindex, nofollow">'
++
++
++def render_demo_html(path: Path) -> str:
++    """Self-contained preview HTML: inline the stylesheet, add noindex and the disclaimer."""
++    content = path.read_text(encoding="utf-8")
++    stylesheet = path.with_name("styles.css")
++    link = '<link rel="stylesheet" href="styles.css">'
++    if link in content:
++        css = stylesheet.read_text(encoding="utf-8") if stylesheet.is_file() else ""
++        content = content.replace(link, f"<style>{css}</style>")
++    if 'name="robots"' not in content:
++        content = content.replace("<head>", f"<head>{ROBOTS_META}", 1)
++    if DISCLAIMER not in content:
++        content = content.replace("<body>", f"<body><p class='concept-banner'>{DISCLAIMER}</p>", 1)
++    return content
++
++
+ @router.get("/ui/demos/{demo_id}/preview", response_class=HTMLResponse)
+ def internal_preview(demo_id: uuid.UUID, db: Session = Depends(session)) -> HTMLResponse:
+     demo = db.get(GeneratedDemo, demo_id)
+     if demo is None:
+         raise HTTPException(404, "demo_not_found")
+-    path = safe_demo_path(demo, db)
+-    content = path.read_text(encoding="utf-8")
+-    if DISCLAIMER not in content:
+-        content = f"<div class='safety'>{DISCLAIMER}</div>" + content
+-    return HTMLResponse(content)
++    return HTMLResponse(render_demo_html(safe_demo_path(demo, db)), headers=PREVIEW_HEADERS)
+ 
+ 
+ @router.get("/ui/artifacts/demo/{demo_id}/index", response_class=HTMLResponse)
+@@ -1691,14 +1806,20 @@ def preview_links(demo_id: uuid.UUID, db: Session = Depends(session)) -> HTMLRes
+     ).all()
+     rows = (
+         "".join(
+-            f"<li>{esc(link.label)} · {esc(link.status)} · expires {esc(link.expires_at)} · "
++            f"<li>{esc(link.label)} · {esc(status_label(link.status))} · expires {esc(fmt_dt(link.expires_at))} · "
+             f"accesses {len(db.scalars(select(DemoPreviewAccessEvent).where(DemoPreviewAccessEvent.preview_link_id == link.id)).all())} "
+             f"<form method='post' action='/ui/preview-links/{link.id}/revoke'><button>Revoke</button></form></li>"
+             for link in links
+         )
+         or "<li>None</li>"
+     )
+-    form = f"<form method='post' action='/ui/demos/{demo_id}/preview-links'><input name='label' value='Concept preview'><input name='expires_days' type='number' min='1' max='30' value='7'><button>Create external preview link</button></form><p>Only share QA-passed/approved concept previews. Not an official website.</p>"
++    demo = db.get(GeneratedDemo, demo_id)
++    if demo is None:
++        raise HTTPException(404, "demo_not_found")
++    if demo.status in {"qa_passed", "approved"}:
++        form = f"<form method='post' action='/ui/demos/{demo_id}/preview-links'><label class='field'><span>Link label (internal)</span><input name='label' value='Concept preview'></label><label class='field'><span>Expires after (days, 1–30)</span><input name='expires_days' type='number' min='1' max='30' value='7'></label><button>Create external preview link</button></form><p>Share only with the business itself. The preview is labelled as an independent concept, not their official website.</p>"
++    else:
++        form = f"<div class='warning' role='status'>This concept cannot be shared while it is “{esc(status_label(demo.status))}”. <a href='/ui/demos/{demo_id}/qa'>See the QA checks</a>.</div>"
+     return page("Preview links", form + f"<ul>{rows}</ul>")
+ 
+ 
+@@ -1755,13 +1876,10 @@ def external_preview(token: str, request: Request, db: Session = Depends(session
+     if demo is None:
+         raise HTTPException(404, "demo_not_found")
+     try:
+-        path = safe_demo_path(demo, db)
+-        content = path.read_text(encoding="utf-8")
+-        if DISCLAIMER not in content:
+-            content = f"<div class='safety'>{DISCLAIMER}</div>" + content
++        content = render_demo_html(safe_demo_path(demo, db))
+         db.add(DemoPreviewAccessEvent(preview_link_id=link.id, outcome="served", event_metadata={"external": True}))
+         db.commit()
+-        return HTMLResponse(content)
++        return HTMLResponse(content, headers=PREVIEW_HEADERS)
+     except HTTPException:
+         db.add(DemoPreviewAccessEvent(preview_link_id=link.id, outcome="blocked", event_metadata={"external": True}))
+         db.commit()
+@@ -1963,7 +2081,7 @@ def pilot_readiness(pilot_id: uuid.UUID, db: Session = Depends(session)) -> HTML
+         f"<tr><td>{esc(c['label'])}</td><td>{c['result']}</td><td>{'required' if c['required'] else 'informational'}</td></tr>"
+         for c in summary["checks"]
+     )
+-    form = f"<form method='post' action='/ui/pilots/{p.id}/acknowledge-source-policy'><textarea name='acknowledgement_text' required>I acknowledge the pilot source policy and will not resell raw data or send automated messages.</textarea><button>Acknowledge source policy</button></form>"
++    form = f"<form method='post' action='/ui/pilots/{p.id}/acknowledge-source-policy'><label class='field'><span>Acknowledgement</span><textarea name='acknowledgement_text' required>I acknowledge the pilot source policy and will not resell raw data or send automated messages.</textarea></label><button>Acknowledge source policy</button></form>"
+     guidance = {
+         "operator_available": (
+             "No active operator is configured.",
+@@ -2201,7 +2319,7 @@ def proposal_review_page(proposal_id: uuid.UUID, db: Session = Depends(session))
+         raise HTTPException(status_code=404, detail="proposal_not_found")
+     return page(
+         "Review proposal",
+-        f'<p>Status: {html.escape(p.status)}</p><form method="post"><input name="reviewer" value="operator"><textarea name="notes"></textarea><button name="decision" value="approve">Approve</button><button name="decision" value="request_changes">Request changes</button></form>',
++        f'<p>Status: {html.escape(status_label(p.status))}</p><form method="post"><label class="field"><span>Reviewer</span><input name="reviewer" required autocomplete="name"></label><label class="field"><span>Notes</span><textarea name="notes"></textarea></label><button name="decision" value="approve">Approve</button><button name="decision" value="request_changes">Request changes</button></form>',
+     )
+ 
+ 
+@@ -2243,8 +2361,10 @@ def proposal_ready_queue(db: Session = Depends(session)) -> HTMLResponse:
+         .where(ProposalPackage.status.in_(["draft", "changes_requested"]))
+         .order_by(ProposalPackage.created_at)
+     ).all()
++    owners = {row.id: row for row in _rows_for_ids(db, [p.business_id for p in proposals])}
+     rows = "".join(
+-        f'<li><a href="/ui/proposals/{p.id}">{html.escape(str(p.business_id))}</a> — {html.escape(p.status)}</li>'
++        f'<li><a href="/ui/proposals/{p.id}">{html.escape(owners[p.business_id].display_name if p.business_id in owners else "Unknown business")}</a>'
++        f" — {html.escape(p.proposal_type.replace('_', ' '))} · {html.escape(status_label(p.status))}</li>"
+         for p in proposals
+     )
+     return page("Proposal-ready queue", f"<ul>{rows or '<li>Queue empty.</li>'}</ul>")
+diff --git a/apps/api/src/lboe_api/ui/workflow.py b/apps/api/src/lboe_api/ui/workflow.py
+new file mode 100644
+index 0000000..02a091b
+--- /dev/null
++++ b/apps/api/src/lboe_api/ui/workflow.py
+@@ -0,0 +1,388 @@
++# ruff: noqa: E501
++"""Operator-console forms for the human-gated pipeline steps.
++
++Before this module the review, draft, consent, contact-log, CRM and follow-up
++steps existed only as JSON endpoints, so an operator using /ui stalled at
++``REVIEW_PENDING``.  Every form posts to a thin UI route that calls the same
++API function (and therefore the same gates), then redirects back with a
++readable outcome.  Nothing here sends a message.
++"""
++
++from __future__ import annotations
++
++import html
++import uuid
++from datetime import UTC, datetime
++from typing import Any
++from urllib.parse import quote_plus
++
++from fastapi import APIRouter, Depends, Form, HTTPException, Request
++from fastapi.responses import RedirectResponse
++from lboe_domain import (
++    DemoReviewRequest,
++    LeadResponseLogRequest,
++    LeadState,
++    ManualOutreachLogRequest,
++    OutreachReadinessRequest,
++)
++from pydantic import ValidationError
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++
++from lboe_api.db import (
++    Business,
++    GeneratedDemo,
++    Operator,
++    OutreachDraftMessage,
++    OutreachDraftPackage,
++    OutreachExecutionRecord,
++)
++from lboe_api.ui.presentation import friendly, local_input_value, parse_local_datetime, status_label
++from lboe_api.ui.routes import session
++
++router = APIRouter()
++
++REVIEWABLE_DEMO_STATUSES = {"qa_passed", "review_pending", "changes_requested", "manual_edit_required"}
++CONSENT_BASIS_OPTIONS = (
++    ("", "Choose the basis you are relying on…"),
++    ("explicit_permission_recorded", "Explicit permission recorded (they asked to be contacted)"),
++    ("existing_relationship", "Existing relationship with this business"),
++    ("public_business_contact_for_manual_outreach", "Public business contact — one manual, opt-out-friendly message"),
++)
++CHANNEL_LABELS = {"email": "Email", "whatsapp": "WhatsApp", "phone_script": "Phone call", "manual_note": "Other"}
++CRM_EVENTS_BY_STATE = {
++    LeadState.CONTACTED.value: (
++        ("reply_received", "They replied"),
++        ("no_response_note", "No response yet"),
++        ("lost", "Not interested / lost"),
++    ),
++    LeadState.REPLIED.value: (("meeting_scheduled", "Meeting scheduled"), ("lost", "Not interested / lost")),
++    LeadState.MEETING.value: (("proposal_sent", "Proposal sent"), ("lost", "Not interested / lost")),
++    LeadState.PROPOSAL.value: (("won", "Won"), ("lost", "Lost")),
++}
++
++
++def _e(value: Any) -> str:
++    return html.escape("" if value is None else str(value))
++
++
++def _field(label: str, control: str, hint: str = "") -> str:
++    hint_html = f"<small class='hint'>{_e(hint)}</small>" if hint else ""
++    return f"<label class='field'><span>{_e(label)}</span>{control}{hint_html}</label>"
++
++
++def current_operator_name(request: Request, db: Session) -> str:
++    operator_id = request.cookies.get("lboe_operator_id")
++    operator = None
++    if operator_id:
++        try:
++            operator = db.get(Operator, uuid.UUID(operator_id))
++        except ValueError:
++            operator = None
++    if operator is None:
++        operator = db.scalar(select(Operator).where(Operator.active.is_(True)).order_by(Operator.created_at))
++    return operator.display_name if operator else ""
++
++
++def _redirect(business_id: uuid.UUID, *, done: str | None = None, error: str | None = None) -> RedirectResponse:
++    query = f"action_completed={quote_plus(done)}" if done else f"action_error={quote_plus(error or 'failed')}"
++    return RedirectResponse(f"/ui/businesses/{business_id}?{query}#workflow", status_code=303)
++
++
++def _outcome(business_id: uuid.UUID, result: dict[str, Any], done: str) -> RedirectResponse:
++    status = str(result.get("status", ""))
++    if status.startswith("not_"):
++        return _redirect(business_id, error=friendly({"reason": result.get("reason")}))
++    return _redirect(business_id, done=done)
++
++
++def workflow_panel(request: Request, db: Session, business: Business, suppressed: bool) -> str:
++    """The human-gated step(s) that apply to this business right now."""
++    if suppressed:
++        return ""
++    reviewer = _e(current_operator_name(request, db))
++    sections: list[str] = []
++    demo = db.scalar(
++        select(GeneratedDemo).where(GeneratedDemo.business_id == business.id).order_by(GeneratedDemo.created_at.desc())
++    )
++    if (
++        demo is not None
++        and demo.status in REVIEWABLE_DEMO_STATUSES
++        and business.state == LeadState.REVIEW_PENDING.value
++    ):
++        from lboe_api.main import REVIEW_CHECKLIST
++
++        checks = "".join(
++            f"<label class='check'><input type='checkbox' name='checklist' value='{_e(code)}'> {_e(label)}</label>"
++            for code, label in REVIEW_CHECKLIST
++        )
++        sections.append(
++            f"<form method='post' action='/ui/demos/{demo.id}/review' class='workflow-step'>"
++            f"<h3>Review the concept preview</h3><p>Open the <a href='/ui/demos/{demo.id}/preview'>concept preview</a> "
++            f"({_e(status_label(demo.status))}) and confirm every item before approving. Approval does not contact anyone.</p>"
++            f"<fieldset><legend>Review checklist</legend>{checks}</fieldset>"
++            + _field("Reviewer", f"<input name='reviewer' required value='{reviewer}' autocomplete='name'>")
++            + _field("Notes", "<textarea name='notes' rows='2'></textarea>")
++            + "<fieldset><legend>Decision</legend>"
++            "<label class='check'><input type='radio' name='decision' value='approve' required> Approve concept</label>"
++            "<label class='check'><input type='radio' name='decision' value='request_changes'> Request changes</label>"
++            "<label class='check'><input type='radio' name='decision' value='request_regeneration'> Regenerate</label>"
++            "<label class='check'><input type='radio' name='decision' value='reject'> Reject</label></fieldset>"
++            "<button class='button-primary'>Record review decision</button></form>"
++        )
++    package = db.scalar(
++        select(OutreachDraftPackage)
++        .where(OutreachDraftPackage.business_id == business.id)
++        .order_by(OutreachDraftPackage.created_at.desc())
++    )
++    if business.state == LeadState.APPROVED_FOR_OUTREACH.value and (package is None or package.status != "ready"):
++        boxes = "".join(
++            f"<label class='check'><input type='checkbox' name='channels' value='{code}' {'checked' if code == 'email' else ''}> {label}</label>"
++            for code, label in CHANNEL_LABELS.items()
++        )
++        sections.append(
++            f"<form method='post' action='/ui/businesses/{business.id}/outreach-draft' class='workflow-step'>"
++            "<h3>Draft outreach (copy only)</h3><p>LBOE prepares text for you to review. It never sends it.</p>"
++            f"<fieldset><legend>Channels to draft</legend>{boxes}</fieldset>"
++            "<button class='button-primary'>Prepare drafts</button></form>"
++        )
++    if business.state == LeadState.APPROVED_FOR_OUTREACH.value and package is not None and package.status == "ready":
++        sections.append(
++            f"<form method='post' action='/ui/businesses/{business.id}/outreach-readiness' class='workflow-step'>"
++            "<h3>Start the consent decision</h3><p>Drafts are ready. Next, decide whether you may contact this business.</p>"
++            f"<input type='hidden' name='outreach_draft_package_id' value='{package.id}'>"
++            "<input type='hidden' name='decision' value='prepare_consent_review'>"
++            + _field("Reviewer", f"<input name='reviewer' required value='{reviewer}' autocomplete='name'>")
++            + "<button class='button-primary'>Open consent decision</button></form>"
++        )
++    if business.state == LeadState.CONSENT_PENDING.value and package is not None:
++        messages = db.scalars(select(OutreachDraftMessage).where(OutreachDraftMessage.package_id == package.id)).all()
++        boxes = "".join(
++            f"<label class='check'><input type='checkbox' name='selected_channels' value='{_e(m.channel)}'> {_e(CHANNEL_LABELS.get(m.channel, m.channel))}</label>"
++            for m in messages
++        )
++        options = "".join(f"<option value='{code}'>{_e(label)}</option>" for code, label in CONSENT_BASIS_OPTIONS)
++        sections.append(
++            f"<form method='post' action='/ui/businesses/{business.id}/outreach-readiness' class='workflow-step'>"
++            "<h3>Consent decision</h3><p class='warning'>Finding a phone number or email on a listing is <strong>not</strong> consent. "
++            "Approve only if you can state the basis below; this clears <em>one manual</em> contact and sends nothing.</p>"
++            f"<input type='hidden' name='outreach_draft_package_id' value='{package.id}'>"
++            + _field("Basis for contact", f"<select name='consent_basis_type' required>{options}</select>")
++            + _field(
++                "Evidence for that basis",
++                "<textarea name='consent_basis_notes' rows='2' required></textarea>",
++                "e.g. where and when permission was given",
++            )
++            + f"<fieldset><legend>Channels you will use</legend>{boxes}</fieldset>"
++            + _field("Reviewer", f"<input name='reviewer' required value='{reviewer}' autocomplete='name'>")
++            + "<fieldset><legend>Decision</legend>"
++            "<label class='check'><input type='radio' name='decision' value='approve_for_manual_outreach' required> Clear for one manual contact</label>"
++            "<label class='check'><input type='radio' name='decision' value='reject_outreach'> Do not contact now</label>"
++            "<label class='check'><input type='radio' name='decision' value='suppress_business'> Suppress permanently</label></fieldset>"
++            "<button class='button-primary'>Record consent decision</button></form>"
++        )
++    if business.state == LeadState.OUTREACH_READY.value and package is not None:
++        messages = db.scalars(
++            select(OutreachDraftMessage).where(
++                OutreachDraftMessage.package_id == package.id, OutreachDraftMessage.approved.is_(True)
++            )
++        ).all()
++        options = "".join(
++            f"<option value='{m.id}'>{_e(CHANNEL_LABELS.get(m.channel, m.channel))} draft</option>" for m in messages
++        )
++        sections.append(
++            f"<form method='post' action='/ui/businesses/{business.id}/outreach-log' class='workflow-step'>"
++            "<h3>Record the contact you made</h3><p>Only record this <strong>after</strong> you contacted them yourself. "
++            f"<a href='/ui/businesses/{business.id}/outreach-workbench'>Copy the approved draft</a>.</p>"
++            f"<input type='hidden' name='outreach_draft_package_id' value='{package.id}'>"
++            + _field("Message used", f"<select name='outreach_draft_message_id' required>{options}</select>")
++            + _field(
++                "When you sent it",
++                f"<input type='datetime-local' name='sent_at' required value='{local_input_value(datetime.now(UTC))}'>",
++            )
++            + _field("Your name", f"<input name='operator' required value='{reviewer}' autocomplete='name'>")
++            + _field("Notes", "<textarea name='notes' rows='2'></textarea>")
++            + "<button class='button-primary'>Record manual contact</button></form>"
++        )
++    events = CRM_EVENTS_BY_STATE.get(business.state)
++    if events:
++        radios = "".join(
++            f"<label class='check'><input type='radio' name='event_type' value='{code}' required> {_e(label)}</label>"
++            for code, label in events
++        )
++        channel_options = "".join(
++            f"<option value='{code}'>{label}</option>"
++            for code, label in (
++                ("email", "Email"),
++                ("whatsapp", "WhatsApp"),
++                ("phone", "Phone"),
++                ("in_person", "In person"),
++            )
++        )
++        sections.append(
++            f"<form method='post' action='/ui/businesses/{business.id}/crm-event' class='workflow-step'>"
++            f"<h3>Record what happened</h3><fieldset><legend>Outcome</legend>{radios}</fieldset>"
++            + _field("Channel", f"<select name='channel'>{channel_options}</select>")
++            + _field("Summary", "<textarea name='summary' rows='2' required></textarea>")
++            + _field(
++                "When",
++                f"<input type='datetime-local' name='occurred_at' required value='{local_input_value(datetime.now(UTC))}'>",
++            )
++            + _field("Your name", f"<input name='operator' required value='{reviewer}' autocomplete='name'>")
++            + "<button class='button-primary'>Record outcome</button></form>"
++        )
++    sections.append(
++        f"<form method='post' action='/ui/businesses/{business.id}/follow-ups' class='workflow-step'>"
++        "<h3>Schedule a follow-up reminder</h3><p>A to-do for you in the follow-up queue. LBOE sends no reminders.</p>"
++        + _field("What to do", "<input name='reason' required maxlength='500'>")
++        + _field("Due", "<input type='datetime-local' name='due_at' required>")
++        + "<button class='button-secondary'>Add follow-up</button></form>"
++    )
++    return (
++        "<section class='section' id='workflow'><h2>Next human decision</h2>"
++        "<p class='muted'>Each step records who decided and why. Nothing is sent by LBOE.</p>"
++        + "".join(sections)
++        + "</section>"
++    )
++
++
++def _exists(db: Session, business_id: uuid.UUID) -> None:
++    if db.get(Business, business_id) is None:
++        raise HTTPException(404, "business_not_found")
++
++
++@router.post("/ui/demos/{demo_id}/review")
++async def review_demo_ui(demo_id: uuid.UUID, request: Request, db: Session = Depends(session)) -> RedirectResponse:
++    from lboe_api.main import REVIEW_CHECKLIST, review_demo
++
++    demo = db.get(GeneratedDemo, demo_id)
++    if demo is None:
++        raise HTTPException(404, "demo_not_found")
++    form = await request.form()
++    confirmed = set(form.getlist("checklist"))
++    payload = {
++        "decision": form.get("decision"),
++        "reviewer": form.get("reviewer"),
++        "notes": form.get("notes") or "",
++        "checklist": [{"code": code, "label": label, "passed": code in confirmed} for code, label in REVIEW_CHECKLIST],
++    }
++    try:
++        review_demo(demo_id, DemoReviewRequest.model_validate(payload), db)
++    except ValidationError as exc:
++        return _redirect(demo.business_id, error=friendly(exc.errors()))
++    except HTTPException as exc:
++        return _redirect(demo.business_id, error=friendly(exc.detail))
++    return _redirect(demo.business_id, done=f"concept review recorded ({payload['decision']})")
++
++
++@router.post("/ui/businesses/{business_id}/outreach-draft")
++async def outreach_draft_ui(
++    business_id: uuid.UUID, request: Request, db: Session = Depends(session)
++) -> RedirectResponse:
++    from lboe_api.main import create_outreach_draft
++
++    _exists(db, business_id)
++    form = await request.form()
++    channels = list(form.getlist("channels"))
++    if not channels:
++        return _redirect(business_id, error="Choose at least one channel to draft.")
++    result = create_outreach_draft(business_id, {"channels": channels, "idempotency_key": f"ui-{uuid.uuid4()}"}, db)
++    return _outcome(business_id, result, "outreach drafts prepared")
++
++
++@router.post("/ui/businesses/{business_id}/outreach-readiness")
++async def outreach_readiness_ui(
++    business_id: uuid.UUID, request: Request, db: Session = Depends(session)
++) -> RedirectResponse:
++    from lboe_api.main import create_outreach_readiness
++
++    _exists(db, business_id)
++    form = await request.form()
++    payload = {
++        "outreach_draft_package_id": form.get("outreach_draft_package_id"),
++        "decision": form.get("decision"),
++        "reviewer": form.get("reviewer"),
++        "selected_channels": list(form.getlist("selected_channels")),
++        "consent_basis_type": form.get("consent_basis_type") or "unknown",
++        "consent_basis_notes": form.get("consent_basis_notes") or "",
++        "notes": form.get("notes") or "",
++        "idempotency_key": f"ui-{uuid.uuid4()}",
++    }
++    try:
++        result = create_outreach_readiness(business_id, OutreachReadinessRequest.model_validate(payload), db)
++    except ValidationError as exc:
++        return _redirect(business_id, error=friendly(exc.errors()))
++    except HTTPException as exc:
++        return _redirect(business_id, error=friendly(exc.detail))
++    return _outcome(business_id, result, "consent decision recorded")
++
++
++@router.post("/ui/businesses/{business_id}/outreach-log")
++async def outreach_log_ui(business_id: uuid.UUID, request: Request, db: Session = Depends(session)) -> RedirectResponse:
++    from lboe_api.main import create_outreach_log
++
++    _exists(db, business_id)
++    form = await request.form()
++    message = db.get(OutreachDraftMessage, uuid.UUID(str(form.get("outreach_draft_message_id"))))
++    if message is None:
++        return _redirect(business_id, error="Choose the approved message you used.")
++    try:
++        payload = ManualOutreachLogRequest(
++            outreach_draft_package_id=uuid.UUID(str(form.get("outreach_draft_package_id"))),
++            outreach_draft_message_id=message.id,
++            channel=message.channel,  # type: ignore[arg-type]
++            operator=str(form.get("operator") or ""),
++            sent_at=parse_local_datetime(str(form.get("sent_at"))),
++            notes=str(form.get("notes") or ""),
++            idempotency_key=f"ui-{uuid.uuid4()}",
++        )
++        result = create_outreach_log(business_id, payload, db)
++    except (ValidationError, ValueError) as exc:
++        return _redirect(business_id, error=friendly(exc.errors() if isinstance(exc, ValidationError) else str(exc)))
++    return _outcome(business_id, result, "manual contact recorded")
++
++
++@router.post("/ui/businesses/{business_id}/crm-event")
++async def crm_event_ui(business_id: uuid.UUID, request: Request, db: Session = Depends(session)) -> RedirectResponse:
++    from lboe_api.main import create_crm_event
++
++    _exists(db, business_id)
++    form = await request.form()
++    execution = db.scalar(
++        select(OutreachExecutionRecord)
++        .where(OutreachExecutionRecord.business_id == business_id)
++        .order_by(OutreachExecutionRecord.created_at.desc())
++    )
++    try:
++        payload = LeadResponseLogRequest(
++            outreach_execution_record_id=execution.id if execution else None,
++            event_type=str(form.get("event_type")),  # type: ignore[arg-type]
++            channel=str(form.get("channel") or "email"),  # type: ignore[arg-type]
++            operator=str(form.get("operator") or ""),
++            occurred_at=parse_local_datetime(str(form.get("occurred_at"))),
++            summary=str(form.get("summary") or ""),
++            idempotency_key=f"ui-{uuid.uuid4()}",
++        )
++        result = create_crm_event(business_id, payload, db)
++    except (ValidationError, ValueError) as exc:
++        return _redirect(business_id, error=friendly(exc.errors() if isinstance(exc, ValidationError) else str(exc)))
++    except HTTPException as exc:
++        return _redirect(business_id, error=friendly(exc.detail))
++    return _outcome(business_id, result, "outcome recorded")
++
++
++@router.post("/ui/businesses/{business_id}/follow-ups")
++def follow_up_ui(
++    business_id: uuid.UUID,
++    reason: str = Form(...),
++    due_at: str = Form(...),
++    db: Session = Depends(session),
++) -> RedirectResponse:
++    from lboe_api.main import FollowUpRequest, create_follow_up
++
++    _exists(db, business_id)
++    try:
++        create_follow_up(business_id, FollowUpRequest(reason=reason, due_at=parse_local_datetime(due_at)), db)
++    except (ValidationError, ValueError) as exc:
++        return _redirect(business_id, error=friendly(exc.errors() if isinstance(exc, ValidationError) else str(exc)))
++    return _redirect(business_id, done="follow-up scheduled")

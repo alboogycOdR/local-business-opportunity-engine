@@ -1,0 +1,12 @@
+13:52:44
+idle in transaction|15
+GET /v1/businesses/{id}: 500 30.011409s
+GET /health: 200 0.002096s
+13:53:34
+idle in transaction|15
+GET /v1/businesses/{id}: 500 30.006609s
+GET /health: 200 0.001602s
+13:54:24
+idle in transaction|15
+GET /v1/businesses/{id}: 500 30.007517s
+GET /health: 200 0.001694s

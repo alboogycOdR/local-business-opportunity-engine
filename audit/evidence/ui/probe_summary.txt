@@ -1,0 +1,230 @@
+SAMPLE ('color-contrast', ('.muted', '.muted > a[href="/ui"]'))
+SAMPLE ('color-contrast', ('main > .muted', '.muted > a[href="/ui"]'))
+SAMPLE ('color-contrast', ('main > p', 'p > a[href="/ui"]'))
+SAMPLE ('color-contrast', ('p', 'p > a[href="/ui"]'))
+SAMPLE ('color-contrast', ('p:nth-child(1)', 'p:nth-child(1) > a[href="/ui"]'))
+SAMPLE ('label', ('input', 'textarea'))
+SAMPLE ('label', ('input[name="label"]', 'input[name="expires_days"]'))
+SAMPLE ('label', ('input[name="role"]',))
+SAMPLE ('label', ('textarea',))
+SAMPLE ('region', ('.safety',))
+SAMPLE ('region', ('body > .safety',))
+SAMPLE ('region', ('body > div',))
+SAMPLE ('region', ('div',))
+SAMPLE ('scrollable-region-focusable', ('table',))
+SAMPLE ('select-name', ('select',))
+
+page                               ovf390 ovf768 ovf1024 small390  h1 unlab jargon uuidtxt uuidlink  words
+login                                   0      0       0       10   1     0      0       0        0     46
+dashboard                               0      0       0       10   2     0      4       0        0    478
+opportunities                           0      0       0       10   2     0      0       0        0   2599
+campaigns                               0      0       0       11   2     3      0       0        0     91
+campaign                                0      0     116      110   2     9    158       0        0   1478
+business-worked                         0      0       0       10   2     3      0       1        1    331
+business-suppressed-stale-score         0      0       0       10   2     3      1       1        1    332
+business-no-website                     0      0       0       10   2     3      0       0        0    299
+business-unscored                       0      0       0       10   2     3      0       0        0    277
+business-outreach-ready                 0      0       0       10   2     3      0       1        1    309
+outreach-workbench                      0      0       0       10   1     0      1       0        0    188
+queues                                  0      0       0       10   1     0      0       0        0     57
+queue-demo-review                       0      0       0       10   1     0      0       0        0     55
+queue-no-website                        0      0       0       53   2     0      0       0        0    555
+queue-qa-failed                         0      0       0       10   1     0      0       0        0    288
+queue-weak-evidence                     0      0       0       10   1     0     24       0        0    178
+queue-no-demo-reason                    0      0       0       10   1     0     46       0        0    409
+queue-not-outreach-ready                0      0       0       10   1     0     11       0        0    200
+queue-follow-up                         0      0       0       10   1     0      0       0        0     51
+queue-proposal-ready                    0      0       0       10   1     0      0       0        0     37
+queue-delivery                          0      0       0       10   1     0      0       0        0     59
+demo-internal-preview                   0      0       0        0   1     0      0       0        0    133
+demo-qa                                 0      0       0       10   1     0      1       0        0    169
+demo-preview-links                      0      0       0       10   1     2      0       0        0     60
+prospect-preview                        0      0       0        0   1     0      0       0        0    133
+proposal                                0      0       0       10   1     0      0       0        0     46
+proposal-review                         0      0       0       10   1     2      0       0        0     39
+proposal-export                         0      0       0       10   1     0      0       0        0     39
+business-proposals                      0      0       0       10   1     0      0       0        0     64
+business-delivery                       0      0       0       10   1     0      0       0        0     60
+delivery-project                        0      0       0       10   1     0      0       0        0    138
+pilots                                  0      0       0       10   1     0      0       0        0     47
+pilot-new                               0      0       0       10   1     0      0       0        0     59
+pilot                                   0      0       0       10   1     0      0       0        0     98
+pilot-readiness                         0      0       0       10   1     1      0       0        0    128
+pilot-calibration                       0      0       0       10   1     0      3       0        0    111
+pilot-exports                           0      0       0       10   1     0      0       0        0     41
+pilot-retrospective                     0      0       0       10   1     0      0       0        0     62
+report-pilot                            0      0       0       10   1     0      5       0        0    183
+report-campaign                         0      0       0       10   1     0     15       1        0    145
+report-calibration                      0      0       0       10   1     0      3       0        0     97
+operators                               0      0       0       10   1     2      0       0        0     53
+operator-select                         0      0       0       10   1     1      0       0        0     41
+my-queue                                0      0       0       10   1     1      0       0        0     41
+system                                  0      0       0       10   1     0      0       0        0     87
+
+landmarks {'main': True, 'nav': True, 'header': True, 'skipLink': False}
+dashboard headings ['H1:Pilot dashboard', 'H1:Turn a map of businesses into your next best action.', 'H2:Review demos', 'H2:Opportunity Cards', 'H2:Lekker Nails 00041', 'H3:Why this matters', 'H2:Mooi Studio 00006', 'H3:Why this matters']
+tables/th/scope/caption per page (desktop): {'campaigns': (1, 5, 0, 0), 'campaign': (1, 8, 0, 0), 'queue-no-website': (1, 5, 0, 0), 'queue-qa-failed': (1, 4, 0, 0), 'queue-weak-evidence': (1, 4, 0, 0), 'queue-no-demo-reason': (1, 4, 0, 0), 'queue-not-outreach-ready': (1, 4, 0, 0), 'queue-follow-up': (1, 3, 0, 0), 'demo-qa': (1, 5, 0, 0), 'pilots': (1, 4, 0, 0), 'pilot-readiness': (1, 3, 0, 0), 'pilot-calibration': (1, 2, 0, 0), 'report-pilot': (1, 2, 0, 0), 'report-calibration': (1, 2, 0, 0), 'operators': (1, 3, 0, 0)}
+mobile overflow samples: {}
+unlabeled controls samples: {'campaigns': ['name [placeholder only]', 'vertical [placeholder only]', 'geography [placeholder only]'], 'campaign': ['queries [placeholder only]', 'geography [placeholder only]', 'latitude [placeholder only]', 'longitude [placeholder only]', 'q [placeholder only]', 'website_status'], 'business-worked': ['operator_id', 'body [placeholder only]', 'reason [placeholder only]'], 'business-suppressed-stale-score': ['operator_id', 'body [placeholder only]', 'reason [placeholder only]'], 'business-no-website': ['operator_id', 'body [placeholder only]', 'reason [placeholder only]'], 'business-unscored': ['operator_id', 'body [placeholder only]', 'reason [placeholder only]'], 'business-outreach-ready': ['operator_id', 'body [placeholder only]', 'reason [placeholder only]'], 'demo-preview-links': ['label', 'expires_days'], 'proposal-review': ['reviewer', 'notes'], 'pilot-readiness': ['acknowledgement_text'], 'operators': ['display_name [placeholder only]', 'role'], 'operator-select': ['operator_id'], 'my-queue': ['operator_id']}
+small target samples mobile: {'login': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'dashboard': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'opportunities': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'campaigns': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'campaign': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'business-worked': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'business-suppressed-stale-score': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'business-no-website': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'business-unscored': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'business-outreach-ready': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'outreach-workbench': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'queues': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'queue-demo-review': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'queue-no-website': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'queue-qa-failed': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'queue-weak-evidence': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'queue-no-demo-reason': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'queue-not-outreach-ready': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'queue-follow-up': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'queue-proposal-ready': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'queue-delivery': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'demo-qa': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'demo-preview-links': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'proposal': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'proposal-review': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'proposal-export': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'business-proposals': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'business-delivery': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'delivery-project': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'pilots': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'pilot-new': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'pilot': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'pilot-readiness': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'pilot-calibration': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'pilot-exports': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'pilot-retrospective': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'report-pilot': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'report-campaign': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'report-calibration': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'operators': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'operator-select': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'my-queue': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns'], 'system': ['a:Dashboard', 'a:Opportunities', 'a:Campaigns']}
+{
+ "dashboard": {
+  "tab_stops_sampled": 43,
+  "stops_without_visible_indicator": 1,
+  "first_stop": {
+   "tag": "a",
+   "text": "LBOE Operator Cockpit",
+   "visibleIndicator": true,
+   "outline": "solid 3px"
+  },
+  "tabs_before_first_form_control": null,
+  "sample": [
+   {
+    "tag": "a",
+    "text": "LBOE Operator Cockpit",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Dashboard",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Opportunities",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Campaigns",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Queues",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Proposals",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Delivery",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Pilots",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Reports",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Admin",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "System",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Dashboard",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   }
+  ]
+ },
+ "business-worked": {
+  "tab_stops_sampled": 24,
+  "stops_without_visible_indicator": 0,
+  "first_stop": {
+   "tag": "a",
+   "text": "LBOE Operator Cockpit",
+   "visibleIndicator": true,
+   "outline": "solid 3px"
+  },
+  "tabs_before_first_form_control": 13,
+  "sample": [
+   {
+    "tag": "a",
+    "text": "LBOE Operator Cockpit",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Dashboard",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Opportunities",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Campaigns",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Queues",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Proposals",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Delivery",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Pilots",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Reports",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "Admin",
+    "visibleIndicator": true,
+    "outline": "solid 3px"
+   },
+   {
+    "tag": "a",
+    "text": "System",
+    "vi

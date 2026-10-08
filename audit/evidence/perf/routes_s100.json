@@ -1,0 +1,816 @@
+{
+  "row_counts": {
+    "businesses": 100,
+    "source_observations": 697,
+    "opportunity_scores": 80,
+    "generated_demos": 48,
+    "jobs": 356
+  },
+  "sample_params": {
+    "campaign_id": "837f6f06-3c17-4f97-897e-d83432fbba05",
+    "business_id": "f582d0f6-cfee-42f2-9476-14a36fb0675e",
+    "audit_id": "2f4fac0e-6869-4aa0-982c-9bec6ba4cb57",
+    "score_id": "1e22ab30-926b-4d88-b638-8adee69dcdc8",
+    "brief_id": "4ae31b03-87a8-4b7c-99b0-bbde076c7d5e",
+    "demo_id": "44ba030c-8993-4498-8217-69deba31fb6c",
+    "review_id": "a857646c-b8d6-45a1-93d4-17d92359b2fa",
+    "package_id": "22cf3a9f-7f8e-4125-bf6e-c839c512988e",
+    "log_id": "0e7cef39-8b17-4cee-8a7a-d01266212dab",
+    "event_id": "a5f25593-8e7e-435e-b69d-ac90f9c79170",
+    "project_id": "d0e0bda7-62ef-4676-a77d-1b66033169cf",
+    "proposal_id": "f0096ad2-119e-415a-bfe7-30857babd31e",
+    "pilot_id": "e2db9bbb-3962-4be1-b1b1-1c323a4f67fd",
+    "queue_name": "demo-review",
+    "token": "not-a-real-token"
+  },
+  "routes": [
+    {
+      "path": "/health",
+      "status": 200,
+      "p50_ms": 5.1,
+      "max_ms": 17.3,
+      "sql_statements": 0,
+      "bytes": 15,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/preview/{token}",
+      "status": 404,
+      "p50_ms": 9.2,
+      "max_ms": 131.4,
+      "sql_statements": 1,
+      "bytes": 30,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ready",
+      "status": 200,
+      "p50_ms": 13.9,
+      "max_ms": 15.4,
+      "sql_statements": 1,
+      "bytes": 58,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui",
+      "status": 200,
+      "p50_ms": 1044.4,
+      "max_ms": 1186.3,
+      "sql_statements": 990,
+      "bytes": 11192,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/artifacts/audit/{artifact_id}",
+      "skipped": "no sample value for ['artifact_id']"
+    },
+    {
+      "path": "/ui/artifacts/demo/{demo_id}/index",
+      "status": 200,
+      "p50_ms": 7.9,
+      "max_ms": 11.8,
+      "sql_statements": 2,
+      "bytes": 1790,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/businesses/{business_id}",
+      "status": 200,
+      "p50_ms": 25.1,
+      "max_ms": 43.9,
+      "sql_statements": 17,
+      "bytes": 8337,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/businesses/{business_id}/delivery",
+      "status": 200,
+      "p50_ms": 7.3,
+      "max_ms": 8.2,
+      "sql_statements": 2,
+      "bytes": 1214,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/businesses/{business_id}/outreach-workbench",
+      "status": 200,
+      "p50_ms": 10.0,
+      "max_ms": 17.7,
+      "sql_statements": 5,
+      "bytes": 2275,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/businesses/{business_id}/proposal",
+      "status": 200,
+      "p50_ms": 7.8,
+      "max_ms": 10.0,
+      "sql_statements": 2,
+      "bytes": 1228,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/campaigns",
+      "status": 200,
+      "p50_ms": 8.5,
+      "max_ms": 8.5,
+      "sql_statements": 2,
+      "bytes": 2095,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/campaigns/{campaign_id}",
+      "status": 200,
+      "p50_ms": 341.6,
+      "max_ms": 344.0,
+      "sql_statements": 403,
+      "bytes": 37455,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/campaigns/{campaign_id}/reports/pilot",
+      "status": 200,
+      "p50_ms": 88.0,
+      "max_ms": 89.0,
+      "sql_statements": 25,
+      "bytes": 3192,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/delivery-projects/{project_id}",
+      "status": 200,
+      "p50_ms": 7.5,
+      "max_ms": 12.4,
+      "sql_statements": 3,
+      "bytes": 2040,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/demos/{demo_id}/preview",
+      "status": 200,
+      "p50_ms": 7.9,
+      "max_ms": 8.9,
+      "sql_statements": 2,
+      "bytes": 1790,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/demos/{demo_id}/preview-links",
+      "status": 200,
+      "p50_ms": 6.0,
+      "max_ms": 12.5,
+      "sql_statements": 1,
+      "bytes": 1269,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/demos/{demo_id}/qa",
+      "status": 200,
+      "p50_ms": 7.9,
+      "max_ms": 8.7,
+      "sql_statements": 2,
+      "bytes": 2762,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/login",
+      "status": 200,
+      "p50_ms": 3.7,
+      "max_ms": 4.3,
+      "sql_statements": 0,
+      "bytes": 1136,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/my-queue",
+      "status": 303,
+      "p50_ms": 4.5,
+      "max_ms": 4.7,
+      "sql_statements": 0,
+      "bytes": 0,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/operator/select",
+      "status": 200,
+      "p50_ms": 7.1,
+      "max_ms": 7.5,
+      "sql_statements": 1,
+      "bytes": 1100,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/operators",
+      "status": 200,
+      "p50_ms": 5.6,
+      "max_ms": 6.3,
+      "sql_statements": 1,
+      "bytes": 1302,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/opportunities",
+      "status": 200,
+      "p50_ms": 861.1,
+      "max_ms": 931.3,
+      "sql_statements": 961,
+      "bytes": 51561,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/pilots",
+      "status": 200,
+      "p50_ms": 6.4,
+      "max_ms": 8.3,
+      "sql_statements": 1,
+      "bytes": 1210,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/pilots/new",
+      "status": 200,
+      "p50_ms": 7.8,
+      "max_ms": 9.3,
+      "sql_statements": 1,
+      "bytes": 1800,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/pilots/{pilot_id}",
+      "status": 200,
+      "p50_ms": 100.7,
+      "max_ms": 117.5,
+      "sql_statements": 31,
+      "bytes": 2188,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/pilots/{pilot_id}/calibration",
+      "status": 200,
+      "p50_ms": 86.4,
+      "max_ms": 107.3,
+      "sql_statements": 26,
+      "bytes": 2363,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/pilots/{pilot_id}/exports",
+      "status": 200,
+      "p50_ms": 8.2,
+      "max_ms": 10.7,
+      "sql_statements": 2,
+      "bytes": 1077,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/pilots/{pilot_id}/readiness",
+      "status": 200,
+      "p50_ms": 12.2,
+      "max_ms": 12.6,
+      "sql_statements": 5,
+      "bytes": 2483,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/pilots/{pilot_id}/retrospective",
+      "status": 200,
+      "p50_ms": 7.4,
+      "max_ms": 10.0,
+      "sql_statements": 2,
+      "bytes": 1842,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/proposals/{proposal_id}",
+      "status": 200,
+      "p50_ms": 6.5,
+      "max_ms": 7.5,
+      "sql_statements": 1,
+      "bytes": 1253,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/proposals/{proposal_id}/export",
+      "status": 200,
+      "p50_ms": 6.4,
+      "max_ms": 6.5,
+      "sql_statements": 1,
+      "bytes": 1001,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/proposals/{proposal_id}/review",
+      "status": 200,
+      "p50_ms": 6.7,
+      "max_ms": 7.0,
+      "sql_statements": 1,
+      "bytes": 1172,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/queues",
+      "status": 200,
+      "p50_ms": 12.7,
+      "max_ms": 16.4,
+      "sql_statements": 6,
+      "bytes": 1477,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/queues/delivery",
+      "status": 200,
+      "p50_ms": 7.8,
+      "max_ms": 7.8,
+      "sql_statements": 1,
+      "bytes": 1622,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/queues/follow-up",
+      "status": 200,
+      "p50_ms": 7.3,
+      "max_ms": 9.4,
+      "sql_statements": 1,
+      "bytes": 1103,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/queues/no-demo-reason",
+      "status": 200,
+      "p50_ms": 171.7,
+      "max_ms": 203.0,
+      "sql_statements": 201,
+      "bytes": 7385,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/queues/not-outreach-ready",
+      "status": 200,
+      "p50_ms": 9.3,
+      "max_ms": 15.1,
+      "sql_statements": 1,
+      "bytes": 3558,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/queues/proposal-ready",
+      "status": 200,
+      "p50_ms": 8.2,
+      "max_ms": 9.3,
+      "sql_statements": 1,
+      "bytes": 965,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/queues/qa-failed",
+      "status": 200,
+      "p50_ms": 40.7,
+      "max_ms": 47.0,
+      "sql_statements": 35,
+      "bytes": 4546,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/queues/weak-evidence",
+      "status": 200,
+      "p50_ms": 97.9,
+      "max_ms": 103.1,
+      "sql_statements": 101,
+      "bytes": 3419,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/queues/{queue_name}",
+      "status": 200,
+      "p50_ms": 14.8,
+      "max_ms": 19.1,
+      "sql_statements": 7,
+      "bytes": 1480,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/reports/calibration",
+      "status": 200,
+      "p50_ms": 127.2,
+      "max_ms": 128.3,
+      "sql_statements": 25,
+      "bytes": 2285,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/reports/pilot",
+      "status": 200,
+      "p50_ms": 128.8,
+      "max_ms": 129.4,
+      "sql_statements": 25,
+      "bytes": 4507,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/ui/system",
+      "status": 200,
+      "p50_ms": 10.1,
+      "max_ms": 10.1,
+      "sql_statements": 3,
+      "bytes": 1549,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/audits/{audit_id}",
+      "status": 200,
+      "p50_ms": 11.5,
+      "max_ms": 11.6,
+      "sql_statements": 4,
+      "bytes": 537,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/briefs/{brief_id}",
+      "status": 200,
+      "p50_ms": 12.8,
+      "max_ms": 16.1,
+      "sql_statements": 4,
+      "bytes": 3815,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/businesses",
+      "status": 200,
+      "p50_ms": 265.5,
+      "max_ms": 279.3,
+      "sql_statements": 301,
+      "bytes": 195797,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/businesses/{business_id}",
+      "status": 200,
+      "p50_ms": 10.6,
+      "max_ms": 13.3,
+      "sql_statements": 4,
+      "bytes": 1976,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/businesses/{business_id}/audits",
+      "status": 200,
+      "p50_ms": 13.3,
+      "max_ms": 15.2,
+      "sql_statements": 5,
+      "bytes": 920,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/businesses/{business_id}/briefs",
+      "status": 200,
+      "p50_ms": 14.6,
+      "max_ms": 14.7,
+      "sql_statements": 5,
+      "bytes": 4547,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/businesses/{business_id}/crm-events",
+      "status": 200,
+      "p50_ms": 8.7,
+      "max_ms": 9.4,
+      "sql_statements": 2,
+      "bytes": 1641,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/businesses/{business_id}/delivery-projects",
+      "status": 200,
+      "p50_ms": 14.1,
+      "max_ms": 20.3,
+      "sql_statements": 6,
+      "bytes": 3853,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/businesses/{business_id}/demos",
+      "status": 200,
+      "p50_ms": 19.3,
+      "max_ms": 19.5,
+      "sql_statements": 8,
+      "bytes": 7361,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/businesses/{business_id}/enrichments",
+      "status": 200,
+      "p50_ms": 9.3,
+      "max_ms": 10.1,
+      "sql_statements": 2,
+      "bytes": 2,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/businesses/{business_id}/follow-ups",
+      "status": 200,
+      "p50_ms": 9.2,
+      "max_ms": 11.4,
+      "sql_statements": 2,
+      "bytes": 2,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/businesses/{business_id}/objections",
+      "status": 200,
+      "p50_ms": 7.9,
+      "max_ms": 8.9,
+      "sql_statements": 2,
+      "bytes": 2,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/businesses/{business_id}/outreach-drafts",
+      "status": 200,
+      "p50_ms": 12.8,
+      "max_ms": 13.4,
+      "sql_statements": 4,
+      "bytes": 8763,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/businesses/{business_id}/outreach-logs",
+      "status": 200,
+      "p50_ms": 9.8,
+      "max_ms": 12.1,
+      "sql_statements": 2,
+      "bytes": 533,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/businesses/{business_id}/outreach-readiness",
+      "status": 200,
+      "p50_ms": 14.8,
+      "max_ms": 17.9,
+      "sql_statements": 6,
+      "bytes": 4391,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/businesses/{business_id}/proposals",
+      "status": 200,
+      "p50_ms": 17.9,
+      "max_ms": 23.3,
+      "sql_statements": 7,
+      "bytes": 6047,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/businesses/{business_id}/scores",
+      "status": 200,
+      "p50_ms": 13.3,
+      "max_ms": 13.8,
+      "sql_statements": 4,
+      "bytes": 3526,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/businesses/{business_id}/suppressions",
+      "status": 200,
+      "p50_ms": 10.7,
+      "max_ms": 14.6,
+      "sql_statements": 2,
+      "bytes": 2,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/campaigns/{campaign_id}",
+      "status": 200,
+      "p50_ms": 9.0,
+      "max_ms": 9.8,
+      "sql_statements": 1,
+      "bytes": 171,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/campaigns/{campaign_id}/discovery-candidates",
+      "status": 200,
+      "p50_ms": 7.5,
+      "max_ms": 9.8,
+      "sql_statements": 1,
+      "bytes": 2,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/campaigns/{campaign_id}/reports/pilot",
+      "status": 200,
+      "p50_ms": 114.9,
+      "max_ms": 134.4,
+      "sql_statements": 26,
+      "bytes": 4343,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/crm-events/{event_id}",
+      "status": 200,
+      "p50_ms": 8.6,
+      "max_ms": 12.2,
+      "sql_statements": 1,
+      "bytes": 544,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/delivery-projects/{project_id}",
+      "status": 200,
+      "p50_ms": 14.1,
+      "max_ms": 14.3,
+      "sql_statements": 5,
+      "bytes": 3851,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/delivery-projects/{project_id}/exports",
+      "status": 200,
+      "p50_ms": 7.5,
+      "max_ms": 7.5,
+      "sql_statements": 1,
+      "bytes": 2,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/demos/{demo_id}",
+      "status": 200,
+      "p50_ms": 14.1,
+      "max_ms": 18.7,
+      "sql_statements": 7,
+      "bytes": 7338,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/demos/{demo_id}/reviews",
+      "status": 200,
+      "p50_ms": 10.1,
+      "max_ms": 10.2,
+      "sql_statements": 3,
+      "bytes": 1481,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/enrichments/{enrichment_id}",
+      "skipped": "no sample value for ['enrichment_id']"
+    },
+    {
+      "path": "/v1/outreach-drafts/{package_id}",
+      "status": 200,
+      "p50_ms": 10.4,
+      "max_ms": 11.2,
+      "sql_statements": 3,
+      "bytes": 8964,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/outreach-logs/{log_id}",
+      "status": 200,
+      "p50_ms": 7.2,
+      "max_ms": 10.1,
+      "sql_statements": 1,
+      "bytes": 531,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/outreach-readiness/{review_id}",
+      "status": 404,
+      "p50_ms": 7.6,
+      "max_ms": 7.8,
+      "sql_statements": 1,
+      "bytes": 41,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/proposals/{proposal_id}",
+      "status": 200,
+      "p50_ms": 11.0,
+      "max_ms": 15.3,
+      "sql_statements": 6,
+      "bytes": 6045,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/proposals/{proposal_id}/exports",
+      "status": 200,
+      "p50_ms": 10.4,
+      "max_ms": 12.5,
+      "sql_statements": 1,
+      "bytes": 2,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/reports/pilot",
+      "status": 200,
+      "p50_ms": 93.2,
+      "max_ms": 100.1,
+      "sql_statements": 25,
+      "bytes": 4301,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/reviews/{review_id}",
+      "status": 200,
+      "p50_ms": 9.4,
+      "max_ms": 13.1,
+      "sql_statements": 2,
+      "bytes": 1479,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/scores/{score_id}",
+      "status": 200,
+      "p50_ms": 9.4,
+      "max_ms": 9.9,
+      "sql_statements": 3,
+      "bytes": 3189,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    },
+    {
+      "path": "/v1/system/status",
+      "status": 200,
+      "p50_ms": 12.3,
+      "max_ms": 12.8,
+      "sql_statements": 3,
+      "bytes": 484,
+      "pool_checked_out_after": 0,
+      "gc_reclaimed_connection_warnings": 0
+    }
+  ]
+}
